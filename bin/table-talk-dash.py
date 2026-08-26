@@ -55,6 +55,27 @@ body{ background:var(--ctp-base); color:var(--ctp-text); }
 .tt-pulse{ color:var(--ctp-green); transition:opacity .9s ease; }
 </style>"""
 
+# Mirrors the header rollup into the tab title: "(N) table-talk" while actions are open.
+# Client-side observer, so every tab stays correct with zero extra server traffic.
+TAB_TITLE_JS = """<script>
+document.addEventListener('DOMContentLoaded', () => {
+  const sync = () => {
+    const el = document.getElementById('tt-rollup');
+    if (!el) return;
+    const m = el.textContent.match(/^(\\d+) action/);
+    document.title = (m ? `(${m[1]}) ` : '') + 'table-talk';
+  };
+  const wait = setInterval(() => {
+    const el = document.getElementById('tt-rollup');
+    if (el) {
+      clearInterval(wait);
+      new MutationObserver(sync).observe(el, {childList: true, characterData: true, subtree: true});
+      sync();
+    }
+  }, 500);
+});
+</script>"""
+
 THEME_MODES = ("system", "light", "dark")
 THEME_ICONS = {"system": "brightness_auto", "light": "light_mode", "dark": "dark_mode"}
 
@@ -133,6 +154,7 @@ def selftest():
         "both Latte and Mocha palettes must be defined"
     assert "body.body--dark" in THEME_CSS, "dark palette must key off Quasar's body--dark"
     assert set(THEME_ICONS) == set(THEME_MODES)
+    assert "tt-rollup" in TAB_TITLE_JS and "document.title" in TAB_TITLE_JS
     print("ok")
 
 
@@ -145,6 +167,7 @@ def main(port):
     from nicegui import app, ui
 
     ui.add_head_html(THEME_CSS)
+    ui.add_head_html(TAB_TITLE_JS)
     dark = ui.dark_mode()
     mode = app.storage.general.get("theme", "system")
 
@@ -228,7 +251,7 @@ def main(port):
     tick()
     # ponytail: full re-glob+refold every tick; mtime-gate if files reach hundreds
     ui.timer(2.0, tick)
-    ui.run(host="127.0.0.1", port=port, show=False, reload=False, title="table-talk")
+    ui.run(host="127.0.0.1", port=port, show=False, reload=False, title="table-talk", favicon="🗣")
 
 
 if __name__ in {"__main__", "__mp_main__"}:
