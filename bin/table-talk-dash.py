@@ -11,6 +11,50 @@ from pathlib import Path
 
 DATA_DIR = Path(os.environ.get("TABLE_TALK_DIR", str(Path.home() / ".local/share/table-talk")))
 
+# Catppuccin palettes (anuppuccin): Latte on light, Mocha on dark.
+# Quasar's dark plugin toggles body--dark, so the variables swap with the theme.
+THEME_CSS = """<style>
+:root{
+  --ctp-base:#eff1f5; --ctp-mantle:#e6e9ef; --ctp-crust:#dce0e8;
+  --ctp-surface0:#ccd0da; --ctp-surface1:#bcc0cc;
+  --ctp-text:#4c4f69; --ctp-subtext:#6c6f85;
+  --ctp-red:#d20f39; --ctp-blue:#1e66f5; --ctp-green:#40a02b;
+  --ctp-mauve:#8839ef; --ctp-lavender:#7287fd; --ctp-peach:#fe640b;
+  --q-primary:#8839ef;
+}
+body.body--dark{
+  --ctp-base:#1e1e2e; --ctp-mantle:#181825; --ctp-crust:#11111b;
+  --ctp-surface0:#313244; --ctp-surface1:#45475a;
+  --ctp-text:#cdd6f4; --ctp-subtext:#a6adc8;
+  --ctp-red:#f38ba8; --ctp-blue:#89b4fa; --ctp-green:#a6e3a1;
+  --ctp-mauve:#cba6f7; --ctp-lavender:#b4befe; --ctp-peach:#fab387;
+  --q-primary:#cba6f7;
+}
+body{ background:var(--ctp-base); color:var(--ctp-text); }
+.tt-header{ background:color-mix(in srgb, var(--ctp-mantle) 90%, transparent);
+  color:var(--ctp-text); backdrop-filter:blur(8px);
+  border-bottom:1px solid var(--ctp-surface0); }
+.tt-title{ font-family:ui-monospace,'JetBrains Mono','Fira Code',monospace;
+  letter-spacing:.05em; color:var(--ctp-mauve); }
+.tt-session{ font-family:ui-monospace,'JetBrains Mono','Fira Code',monospace;
+  color:var(--ctp-lavender); }
+.tt-sec{ font-size:.72rem; font-weight:700; letter-spacing:.09em;
+  text-transform:uppercase; color:var(--ctp-subtext); }
+.nicegui-content .q-card{ background:var(--ctp-mantle); color:var(--ctp-text);
+  border:1px solid var(--ctp-surface0); border-radius:14px;
+  box-shadow:0 1px 3px color-mix(in srgb, var(--ctp-crust) 60%, transparent); }
+.q-table{ background:transparent; color:var(--ctp-text); }
+.q-table__card{ background:transparent; box-shadow:none; color:var(--ctp-text); }
+.q-table th{ color:var(--ctp-subtext); font-weight:600; border-color:var(--ctp-surface0); }
+.q-table td{ border-color:var(--ctp-surface0); }
+.q-table tbody tr:hover{ background:color-mix(in srgb, var(--ctp-surface0) 45%, transparent); }
+.q-table__bottom{ color:var(--ctp-subtext); }
+.q-expansion-item .q-item{ color:var(--ctp-subtext); }
+</style>"""
+
+THEME_MODES = ("system", "light", "dark")
+THEME_ICONS = {"system": "brightness_auto", "light": "light_mode", "dark": "dark_mode"}
+
 COLS = {
     "action": ["id", "background", "why", "rec"],
     "task": ["id", "what", "progress"],
@@ -82,6 +126,10 @@ def selftest():
         after = card_data(fold(p))
         assert after != card_data(s) and after["task"][0]["progress"] == "epoch 4", \
             "card_data must change when an event lands"
+    assert "--ctp-base:#eff1f5" in THEME_CSS and "--ctp-base:#1e1e2e" in THEME_CSS, \
+        "both Latte and Mocha palettes must be defined"
+    assert "body.body--dark" in THEME_CSS, "dark palette must key off Quasar's body--dark"
+    assert set(THEME_ICONS) == set(THEME_MODES)
     print("ok")
 
 
@@ -91,17 +139,41 @@ SECTIONS = (("🔴 Actions needed", "action", "id"),
 
 
 def main(port):
-    from nicegui import ui
+    from nicegui import app, ui
+
+    ui.add_head_html(THEME_CSS)
+    dark = ui.dark_mode()
+    mode = app.storage.general.get("theme", "system")
+
+    def apply_theme(m):
+        {"system": dark.auto, "light": dark.disable, "dark": dark.enable}[m]()
+
+    apply_theme(mode)
+
+    with ui.header().classes("tt-header items-center"):
+        ui.label("table-talk").classes("text-lg font-bold tt-title")
+        ui.space()
+
+        def cycle():
+            nonlocal mode
+            mode = THEME_MODES[(THEME_MODES.index(mode) + 1) % len(THEME_MODES)]
+            app.storage.general["theme"] = mode
+            apply_theme(mode)
+            btn.props(f'icon={THEME_ICONS[mode]}')
+
+        btn = ui.button(on_click=cycle).props(f'flat round icon={THEME_ICONS[mode]}')
+        with btn:
+            ui.tooltip("theme: system → light → dark")
 
     cards = {}    # path -> {"tables": {key: ui.table}, "expansion": ui.expansion, "data": card_data}
     built = None  # file list the DOM was last built for; None = never built
 
     def build_card(path, data):
         with ui.card().classes("w-full"):
-            ui.label(path.stem).classes("text-lg font-bold")
+            ui.label(path.stem).classes("text-base font-bold tt-session")
             tables = {}
             for label, key, row_key in SECTIONS:
-                ui.label(label)
+                ui.label(label).classes("tt-sec")
                 tables[key] = ui.table(columns=columns(key), rows=data[key],
                                        row_key=row_key).classes("w-full")
             exp = ui.expansion(f"{len(data['done'])} done").classes("w-full opacity-50")
