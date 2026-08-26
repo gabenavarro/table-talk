@@ -155,12 +155,19 @@ def selftest():
     assert "body.body--dark" in THEME_CSS, "dark palette must key off Quasar's body--dark"
     assert set(THEME_ICONS) == set(THEME_MODES)
     assert "tt-rollup" in TAB_TITLE_JS and "document.title" in TAB_TITLE_JS
+    assert section_label("action", 3) == "🔴 Actions needed · 3"
+    assert set(SECTION_TEXT) == {"action", "task", "term"}
     print("ok")
 
 
 SECTIONS = (("🔴 Actions needed", "action", "id"),
             ("🔵 Background work", "task", "id"),
             ("📖 Glossary (cumulative)", "term", "term"))
+SECTION_TEXT = {key: label for label, key, _ in SECTIONS}
+
+
+def section_label(key, count):
+    return f"{SECTION_TEXT[key]} · {count}"
 
 
 def main(port):
@@ -200,8 +207,9 @@ def main(port):
         with ui.card().classes("w-full"):
             ui.label(path.stem).classes("text-base font-bold tt-session")
             tables = {}
-            for label, key, row_key in SECTIONS:
-                ui.label(label).classes("tt-sec")
+            labels = {}
+            for _, key, row_key in SECTIONS:
+                labels[key] = ui.label(section_label(key, len(data[key]))).classes("tt-sec")
                 tables[key] = ui.table(columns=columns(key), rows=data[key],
                                        row_key=row_key).classes("w-full")
             exp = ui.expansion(f"{len(data['done'])} done").classes("w-full opacity-50")
@@ -209,7 +217,7 @@ def main(port):
                 tables["done"] = ui.table(columns=columns("done"), rows=data["done"],
                                           row_key="id").classes("w-full")
             exp.set_visibility(bool(data["done"]))
-        return {"tables": tables, "expansion": exp, "data": data}
+        return {"tables": tables, "labels": labels, "expansion": exp, "data": data}
 
     container = ui.column().classes("w-full")
 
@@ -236,6 +244,8 @@ def main(port):
                     if data[key] != card["data"][key]:
                         table.rows[:] = data[key]
                         table.update()
+                        if key in card["labels"]:
+                            card["labels"][key].set_text(section_label(key, len(data[key])))
                 card["expansion"].set_text(f"{len(data['done'])} done")
                 card["expansion"].set_visibility(bool(data["done"]))
                 card["data"] = data
