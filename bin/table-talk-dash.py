@@ -7,6 +7,8 @@
 import argparse
 import json
 import os
+import time
+from datetime import datetime
 from pathlib import Path
 
 DATA_DIR = Path(os.environ.get("TABLE_TALK_DIR", str(Path.home() / ".local/share/table-talk")))
@@ -55,6 +57,7 @@ body{ background:var(--ctp-base); color:var(--ctp-text); }
 .tt td{ white-space:normal; overflow-wrap:anywhere; vertical-align:top; }
 .tt td:first-child,.tt th:first-child{ font-family:ui-monospace,'JetBrains Mono','Fira Code',monospace; }
 .tt td:first-child{ white-space:nowrap; }
+.tt-age{ color:var(--ctp-subtext); }
 .tt-rollup{ color:var(--ctp-subtext); }
 .tt-rollup-hot{ color:var(--ctp-red); font-weight:600; }
 .tt-pulse{ color:var(--ctp-green); transition:opacity .9s ease; }
@@ -166,6 +169,9 @@ def selftest():
     assert accent({"action": [], "task": [1]}) == "blue"
     assert accent({"action": [], "task": []}) == "green"
     assert "font-variant-numeric:tabular-nums" in THEME_CSS and "max-width:1100px" in THEME_CSS
+    assert ago(0, now=30) == "just now" and ago(0, now=90) == "1m ago"
+    assert ago(0, now=7200) == "2h ago" and ago(0, now=200000) == "2d ago"
+    assert latest_ts({"a": {"ts": 5}, "b": {"ts": 9}, "c": {}}) == 9 and latest_ts({}) == 0
     print("ok")
 
 
@@ -182,6 +188,25 @@ def section_label(key, count):
 def accent(data):
     """Card state color: needs the user > working > settled."""
     return "red" if data["action"] else ("blue" if data["task"] else "green")
+
+
+def latest_ts(state):
+    return max((e.get("ts", 0) for e in state.values()), default=0)
+
+
+def ago(ts, now=None):
+    d = (now if now is not None else time.time()) - ts
+    if d < 60:
+        return "just now"
+    if d < 3600:
+        return f"{int(d // 60)}m ago"
+    if d < 86400:
+        return f"{int(d // 3600)}h ago"
+    return f"{int(d // 86400)}d ago"
+
+
+def stamp(ts):
+    return datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M:%S")
 
 
 def main(port):
@@ -217,10 +242,14 @@ def main(port):
     cards = {}    # path -> {"tables": {key: ui.table}, "expansion": ui.expansion, "data": card_data}
     built = None  # file list the DOM was last built for; None = never built
 
-    def build_card(path, data):
+    def build_card(path, data, latest):
         with ui.card().classes("w-full").style(
                 f"border-left:4px solid var(--ctp-{accent(data)})") as card_el:
-            ui.label(path.stem).classes("text-base font-bold tt-session")
+            with ui.row().classes("items-baseline gap-2 w-full"):
+                ui.label(path.stem).classes("text-base font-bold tt-session")
+                meta = ui.label(ago(latest) if latest else "").classes("text-xs tt-age")
+                with meta:
+                    tip = ui.tooltip(stamp(latest) if latest else "")
             tables = {}
             labels = {}
             for _, key, row_key in SECTIONS:
@@ -232,7 +261,8 @@ def main(port):
                 tables["done"] = ui.table(columns=columns("done"), rows=data["done"],
                                           row_key="id").props("dense flat").classes("w-full tt")
             exp.set_visibility(bool(data["done"]))
-        return {"el": card_el, "tables": tables, "labels": labels, "expansion": exp, "data": data}
+        return {"el": card_el, "tables": tables, "labels": labels, "expansion": exp,
+                "data": data, "meta": meta, "tip": tip, "latest_ts": latest, "age_txt": None}
 
     container = ui.column().classes("w-full")
 
@@ -248,11 +278,13 @@ def main(port):
                 if not files:
                     ui.label("no sessions yet - record something with the table-talk CLI").classes("m-8 text-gray-500")
                 for p in files:
-                    cards[p] = build_card(p, card_data(fold(p)))
+                    state = fold(p)
+                    cards[p] = build_card(p, card_data(state), latest_ts(state))
             built = files
         else:
             for p, card in cards.items():  # data-only change: mutate rows in place so scroll and sort survive
-                data = card_data(fold(p))
+                state = fold(p)
+                data = card_data(state)
                 if data == card["data"]:
                     continue
                 for key, table in card["tables"].items():
@@ -264,7 +296,15 @@ def main(port):
                 card["expansion"].set_text(f"{len(data['done'])} done")
                 card["expansion"].set_visibility(bool(data["done"]))
                 card["el"].style(f"border-left:4px solid var(--ctp-{accent(data)})")
+                if (lt := latest_ts(state)) != card["latest_ts"]:
+                    card["latest_ts"] = lt
+                    card["tip"].set_text(stamp(lt))
                 card["data"] = data
+        for card in cards.values():  # age advances even when data does not; re-render only on text change
+            txt = ago(card["latest_ts"]) if card["latest_ts"] else ""
+            if card["age_txt"] != txt:
+                card["age_txt"] = txt
+                card["meta"].set_text(txt)
         n = sum(len(c["data"]["action"]) for c in cards.values())
         txt = (f"{n} action{'s' if n != 1 else ''} needed across "
                f"{len(cards)} session{'s' if len(cards) != 1 else ''}") if n else "all clear"
