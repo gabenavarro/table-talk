@@ -112,7 +112,10 @@ document.addEventListener('DOMContentLoaded', () => {
     let prev = read();
     new MutationObserver(() => {
       const n = read();
-      if (n > prev) show(`${n - prev} new action item${n - prev > 1 ? 's' : ''} need you`);
+      if (n > prev) {
+        const d = n - prev, s = d > 1 ? 's' : '';
+        show(`${d} new action item${s} need${s ? '' : 's'} you`);
+      }
       prev = n;
     }).observe(el, {childList: true, characterData: true, subtree: true});
   }, 500);
