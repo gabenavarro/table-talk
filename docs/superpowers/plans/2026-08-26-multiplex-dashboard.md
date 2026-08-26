@@ -19,7 +19,8 @@
 - **No new dependencies.** Not for fonts, not for drag-and-drop, not for testing.
 - **Fonts must not require the network.** The dashboard is loopback-only; declare real fallback stacks (`ui-monospace, SF Mono, Menlo, Consolas, monospace` and `system-ui, -apple-system, Segoe UI, sans-serif`).
 - **Tests are assert-based selftests, no framework, no fixtures.** `test.sh` is the whole suite.
-- **All user text renders through `ui.label`**, which escapes. Never `ui.html` with event content.
+- **All user text renders through `ui.label`**, which escapes. The single exception is `marked()` (Task 6a), which escapes every chunk itself and is property-tested; nothing else may reach `ui.html`.
+- **The filter dims, it never hides.** A filter must never remove an open action from the wall — see the spec's Filtering section. Highlight with colour only; no padding, no bold.
 - **Exact palette values** are in the spec's palette table and are copied verbatim — dark ground `#1d2021`, dark surface `#282828`, light ground `#e8e6dc`, light surface `#faf9f5`, cursor `#8ec07c` dark / `#d97757` light.
 - **Persisted UI state lives in `app.storage.general`** (no `storage_secret` needed): `theme`, `sort`, `cols`, `drawer_open`, `marks`, `folds`, `groups_folded`, `scope`.
 - **Commit after every task**, using the message given in that task's final step.
@@ -614,6 +615,7 @@ Quasar's table `filter` prop disappears with the tables, so filtering becomes ou
 **Interfaces:**
 - Consumes: nothing from earlier tasks.
 - Produces: `row_text(ev: dict) -> str` and `matches(state: dict, name: str, query: str | None) -> bool`.
+- **Note (added after the filtering research):** `matches` answers "does this session match at all", which feeds the `N/M rows match` readout. Per-row dimming uses `row_text(ev)` directly — `q in row_text(ev).lower()`. Neither controls visibility any more; both control dimming. When implementing, reword the docstring accordingly: "survives the filter" is left over from the hide-based design.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -679,6 +681,102 @@ Expected: `ok`, then `all selftests passed`
 ```bash
 git add bin/tt_model.py
 git commit -m "feat(model): server-side session and row filtering"
+```
+
+---
+
+### Task 6a: `parts()` and `marked()` — safe match highlighting
+
+Added after the filtering research. `ui.label` escapes, so a highlight span cannot go through it; this builds the escaped HTML itself. Security-adjacent, so it gets a property test rather than a handful of examples.
+
+**Files:**
+- Modify: `bin/tt_model.py`
+
+**Interfaces:**
+- Consumes: nothing from earlier tasks.
+- Produces: `parts(text: str, q: str | None) -> list[tuple[str, bool]]` and `marked(text: str, q: str | None) -> str`.
+
+- [ ] **Step 1: Write the failing test**
+
+Add to `selftest()` before `print("ok")`:
+
+```python
+    import html as _html
+    import random as _random
+    assert parts("SEssion", "se") == [("SE", True), ("ssion", False)], "original casing survives"
+    assert parts("abc", "") == [("abc", False)] and parts("", "x") == [("", False)]
+    assert parts("aaa", "aa") == [("aa", True), ("a", False)], "matches are non-overlapping"
+    assert marked("a & b", "&amp;").count("tt-hit") == 0, "an escaped entity must not self-match"
+    assert marked("x", "</span>").count("tt-hit") == 0, "our own markup is not in the search space"
+    assert marked('<script>alert(1)</script>', "script").count("tt-hit") == 2
+    assert "<script>" not in marked('<script>alert(1)</script>', "script"), "hostile text stays text"
+
+    # Property test: stripping our spans must return exactly html.escape(original),
+    # and the chunks must reassemble the source losslessly. ~48k pairs.
+    _strip = re.compile(r'</?span[^>]*>')
+    _rng = _random.Random(20260826)
+    _hostile = ['<script>alert("xss")</script>', 'a & b', '5 < 6 && 7', '"quoted"', "it's",
+                '</span><img src=x onerror=alert(1)>', '&amp;', '<span class="tt-hit">', '']
+    _texts = _hostile + ["".join(_rng.choice('<>&"\'/ abSE&;') for _ in range(_rng.randint(0, 40)))
+                         for _ in range(2000)]
+    for _t in _texts:
+        for _q in ("", "a", "se", "SE", "&", "<", '"', "'", "</span>", "&amp;", "<script>", "ab"):
+            assert _strip.sub("", marked(_t, _q)) == _html.escape(_t), \
+                f"round-trip must equal html.escape for {_t!r} / {_q!r}"
+            assert "".join(c for c, _ in parts(_t, _q)) == _t, "chunks must reassemble losslessly"
+```
+
+- [ ] **Step 2: Run the test to verify it fails**
+
+Run: `python3 bin/tt_model.py --selftest`
+Expected: `NameError: name 'parts' is not defined`
+
+- [ ] **Step 3: Write the implementation**
+
+Add `import html` to the imports, then after `matches`:
+
+```python
+def parts(text, q):
+    """Split text into [(chunk, is_match)], case-insensitive, preserving the
+    original casing and spacing. Matches are non-overlapping, left to right."""
+    if not q:
+        return [(text, False)]
+    low, ql, out, i = text.lower(), q.lower(), [], 0
+    while (j := low.find(ql, i)) != -1:
+        if j > i:
+            out.append((text[i:j], False))
+        out.append((text[j:j + len(ql)], True))
+        i = j + len(ql)
+    if i < len(text):
+        out.append((text[i:], False))
+    return out or [("", False)]
+
+
+def marked(text, q):
+    """Escaped HTML with matched substrings wrapped in a highlight span.
+
+    Escaping happens AFTER the split, never before. Escaping first is broken in
+    both directions: a query of 'a&b' would stop matching 'a&amp;b', and a query
+    of '<span class=' would match the markup just inserted. Splitting on the raw
+    text means source '<', '&' and quotes can never become markup, stay
+    searchable, and our own markup is not in the search space.
+
+    This is the one place ui.html is permitted; the property test pins it.
+    """
+    return "".join(f'<span class="tt-hit">{html.escape(c)}</span>' if hit else html.escape(c)
+                   for c, hit in parts(text, q))
+```
+
+- [ ] **Step 4: Run the test to verify it passes**
+
+Run: `python3 bin/tt_model.py --selftest && ./test.sh`
+Expected: `ok`, then `all selftests passed`
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add bin/tt_model.py
+git commit -m "feat(model): safe match highlighting via escape-after-split"
 ```
 
 ---
@@ -1096,9 +1194,13 @@ def render_window_body(container, state, newest_action_id, changed=()):
 
     A window holds a handful of rows, so rebuilding it is cheaper and far
     simpler than diffing them - and the caller only calls this when that
-    window's data actually changed. Filtering is by session, not by row: a
-    session survives the filter whole (tt_model.matches), so a window's body
-    always shows everything that session holds.
+    window's data actually changed.
+
+    The filter DIMS, it never hides: a filter must never remove an open action
+    from the wall. Non-matching rows get the tt-dim class and stay in place, so
+    the layout does not reflow and nothing disappears while you are looking for
+    something else. `query` drives dimming and highlighting only, never
+    visibility.
     """
     from nicegui import ui
     container.clear()
@@ -1155,6 +1257,28 @@ def _done_row(ev):
 
 `newest_action_id` is the id of the single newest open action **across the whole
 wall**, computed once per tick — exactly one blinking cursor exists on the page.
+
+`render_window_body` takes `query` as its last argument. Each row is rendered
+with `M.marked(text, query)` through a single `ui.html` per row, and gets
+`tt-dim` when `M.matches` is false for that row. Three rules from the research,
+all of which fell out of measurements — see the spec's Filtering section:
+
+- The header carries a `N/M rows match` readout. Under dim it is **load-bearing**:
+  without it, "nothing matched" and "your match is 600 px below" look identical.
+- After applying the filter, scroll the first match into view — the highlight span
+  is the target, so this is one line:
+  `document.querySelector('.tt-hit')?.scrollIntoView({block:'center'})`.
+  Clearing the query scrolls back to the top.
+- The filter input uses `debounce=100`, not the 200 ms shipping today.
+
+Add to `bin/tt.css`:
+
+```css
+.tt-dim{opacity:.35}
+/* colour only - padding or weight changes advance width, re-wraps the
+   paragraph, and destroys the zero-reflow property the dim treatment exists for */
+.tt-hit{background:var(--gls);color:var(--bg);border-radius:2px}
+```
 
 Also register the copy script in `main()` beside the other head HTML:
 
@@ -1861,6 +1985,7 @@ git commit -m "docs: new dashboard hero, demo tape, and key bindings"
 
 ## Self-review notes
 
-- **Spec coverage.** Palettes → Task 7. Typography → Task 7. Drawer, grouping, group-of-one, fold-on-load, sort, scope, collapsed rail → Tasks 4, 10, 12. Wall, tmux flags, `project:index`, sections, prose why/rec, empty states, footer → Tasks 8, 9. Statusline and `watch(1)` cadence → Task 11. Packer (all five rules) → Tasks 5, 9. Mark/zoom/fold/columns → Task 12. Percent → Task 2. Meter and summed roll-up → Task 3. Filtering → Task 6. Shared foundations: ids-copy → Task 8, box-drawing → Task 8, one cursor → Task 8, change bars → Task 13, watch(1) → Task 11, reverse-video → Task 7 CSS, tape → Task 14.
+- **Amended 2026-08-26** after three parallel investigations into filtering. Changes: Task 6a added (safe highlighting); the filter now dims rather than hides, because hiding can remove an open action from a monitoring dashboard; a `N/M rows match` readout became mandatory; highlight is colour-only to preserve zero reflow; debounce drops 200 ms → 100 ms. Tasks 1–7 as already implemented are unaffected — only `matches`'s docstring needs rewording.
+- **Spec coverage.** Palettes → Task 7. Filtering treatment → Tasks 6, 6a, 8. Typography → Task 7. Drawer, grouping, group-of-one, fold-on-load, sort, scope, collapsed rail → Tasks 4, 10, 12. Wall, tmux flags, `project:index`, sections, prose why/rec, empty states, footer → Tasks 8, 9. Statusline and `watch(1)` cadence → Task 11. Packer (all five rules) → Tasks 5, 9. Mark/zoom/fold/columns → Task 12. Percent → Task 2. Meter and summed roll-up → Task 3. Filtering → Task 6. Shared foundations: ids-copy → Task 8, box-drawing → Task 8, one cursor → Task 8, change bars → Task 13, watch(1) → Task 11, reverse-video → Task 7 CSS, tape → Task 14.
 - **Deliberately deferred:** drag-and-drop (spec: out of scope), and the `?` key overlay, which is listed in `KEYMAP` but renders nothing until someone wants it.
 - **Naming is consistent across tasks:** `summarize`/`roll_up`/`group_sessions`/`sort_groups`/`weight`/`pack`/`matches`/`percent` in `tt_model`; `blocks`/`resolved_cells`/`render_window_body`/`layout_key`/`default_cols`/`abbrev`/`tally_text`/`changed_ids` in the dashboard. Every name used in a later task is defined in an earlier one.

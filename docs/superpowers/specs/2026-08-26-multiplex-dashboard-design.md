@@ -184,6 +184,100 @@ busy day cannot be outvoted by a quiet one:
 phephree = (0 + 4) / (5 + 7) = 4/12 = 33%     not (0% + 57%)/2 = 29%
 ```
 
+## Filtering
+
+Three parallel investigations (2026-08-26) settled this; all three built runnable
+apps and measured rather than reasoned. Their conclusions are load-bearing, so
+the evidence is recorded here rather than lost in a transcript.
+
+**The filter dims, it never hides.** A query marks non-matching rows at ~35%
+opacity and highlights the matched substring. Nothing changes position.
+
+The reason is a correctness rule, not taste: **a filter must never hide an open
+action.** This dashboard exists to answer "what needs me?" from across the room.
+With session-level or row-hide filtering, typing a glossary term empties the wall
+of every open action — measured: 5 open actions on screen, 0 after querying
+`overdispersion`. If the 2 s poll then lands a new action, it is never seen.
+That is a monitoring tool that stops monitoring. Dimmed rows stay on screen,
+stay red-bordered, and stay countable at a glance.
+
+Two supporting measurements:
+
+- **Zero reflow.** Dim moves 0 of 40 rows on every query, page height constant.
+  Row-hide moves 40 of 40 on almost every query, because the packer repacks and
+  windows jump between columns. The 2 s poll already mutates this wall; a filter
+  that repacks on every keystroke means it is never still.
+- **Dim alone leaves the match off-screen** on half of realistic queries with no
+  hint which way to scroll, so the treatment includes scrolling the first match
+  into view. The highlight span *is* the scroll target, so this is one line.
+
+**Required companions**, each of which fell out of a measurement:
+
+- A `N/M rows match` readout in the header is **mandatory, not decoration**. Under
+  dim, "nothing matched" and "your match is 600 px below" are pixel-identical
+  (measured: identical mean luminance, 31.00 both).
+- Highlighting is **colour only** — no padding, no bold, no border. Padding or
+  weight changes advance width, re-wraps the paragraph and destroys the
+  zero-reflow property (measured: 16 px of movement across 5 rows).
+- Filter input debounce is **100 ms**, not the 200 ms shipping today. Measured
+  ~117 ms end to end versus ~209 ms.
+- Clearing the query scrolls back to the top: clearing is how you return to
+  glance mode.
+
+### Why not keep Quasar's table filter
+
+The original plan warned that dropping `ui.table` loses free client-side
+filtering. That warning was wrong, for a reason worth recording:
+
+- **It already round-trips.** `bind_value_to` is a Python-side binding, so every
+  keystroke goes browser → websocket → Python → back to Quasar. Proven by cutting
+  the network: typing filtered nothing in either build. At the shipped debounce
+  the custom filter is 6 ms slower.
+- **Quasar filters inside the widget, so Python never learns what matched**, and
+  every derived count then describes unfiltered data. This is already a live bug:
+  the shipped dashboard computes section counts from the unfiltered row list while
+  handing the query to Quasar, so filtering to one hit leaves a header reading
+  "Actions needed · 2" above a single row. The redesign multiplies these derived
+  numbers — section counts, drawer badges, meters, roll-ups, statusline tallies —
+  and all of them must agree with what is visible. Python must therefore compute
+  the matching set regardless, which makes the built-in filter redundant work.
+- **Quasar cannot highlight matches at all.** With `why` and `rec` as paragraphs,
+  an unhighlighted match inside one is effectively unfindable.
+
+A Quasar `body` slot was also tested and does genuinely preserve filter, sort,
+pagination and no-data while rendering arbitrary markup, at negligible cost. It
+was rejected only because it cannot feed the derived counts either — so it buys
+nothing here.
+
+Known limit, accepted: above ~200 visible rows the custom renderer costs ~270 ms
+per keystroke against Quasar's ~20 ms. The matching itself is 0.9 ms; the cost is
+NiceGUI element construction. At today's 39 rows it is 6–27 ms. The fix when it
+bites is a row cap, not a table.
+
+### Highlighting safely
+
+`ui.label` escapes, so a highlight span cannot be injected through it. The safe
+construction is **split on the raw text, escape each chunk, wrap only the matched
+ones** — escaping *after* the split, never before:
+
+```python
+def parts(text, q):        # -> [(chunk, is_match)]
+def marked(text, q):       # -> escaped HTML with matches wrapped
+```
+
+Escaping before substituting is subtly broken in both directions: a query of
+`a&b` stops matching `a&amp;b`, and a query of `<span class=` matches the markup
+just inserted. Escaping after the split means source `<`, `&` and quotes can
+never become markup and remain searchable, and our own markup is not in the
+search space.
+
+This is the one place `ui.html` is permitted, because `marked()` escapes every
+chunk itself and is property-tested over ~48k random and hostile inputs: stripping
+the spans from `marked(v, q)` returns exactly `html.escape(v)` for every input.
+Rendering instead as a sequence of marked `ui.label`s is also safe but creates and
+destroys ~235 DOM elements per keystroke against 40 `set_content` calls, and
+discards scroll, focus and selection along with the element identity.
+
 ## Shared foundations
 
 1. **Ids hand you the command.** Clicking any id copies `table-talk done <id>`.
