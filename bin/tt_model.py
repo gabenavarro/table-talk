@@ -87,6 +87,46 @@ def percent(text):
     return None
 
 
+_COUNTED = ("action", "task")
+
+
+def summarize(state):
+    """Counts for one folded session file.
+
+    resolved/recorded covers actions and tasks only: a glossary term is
+    reference material, not something you owe anyone. latest spans every event
+    including terms, because it answers 'when did this session last do
+    anything', not 'when did an obligation move'.
+    """
+    open_a = open_t = resolved = recorded = latest = 0
+    for ev in state.values():
+        latest = max(latest, ev.get("ts", 0))
+        typ = ev.get("type")
+        if typ not in _COUNTED:
+            continue
+        recorded += 1
+        if ev.get("status") == "done":
+            resolved += 1
+        elif typ == "action":
+            open_a += 1
+        else:
+            open_t += 1
+    return {"open_actions": open_a, "open_tasks": open_t,
+            "resolved": resolved, "recorded": recorded,
+            "pct": 100 if recorded == 0 else round(100 * resolved / recorded),
+            "latest": latest}
+
+
+def roll_up(summaries):
+    """A project's numbers are the SUM of its sessions', never the average of
+    their percentages: averaging lets a quiet day outvote a busy one."""
+    tot = {k: sum(s[k] for s in summaries)
+           for k in ("open_actions", "open_tasks", "resolved", "recorded")}
+    tot["latest"] = max((s["latest"] for s in summaries), default=0)
+    tot["pct"] = 100 if tot["recorded"] == 0 else round(100 * tot["resolved"] / tot["recorded"])
+    return tot
+
+
 def selftest():
     import tempfile
     with tempfile.TemporaryDirectory() as td:
@@ -130,6 +170,32 @@ def selftest():
     assert percent("Blocked on capacity (see 9a70), not on code") is None
     assert percent("Seeds 8042000-8042328 planned") is None, "a numeric range is not a fraction"
     assert percent("") is None and percent(None) is None
+
+    # summarize: terms are reference material, never an obligation, so they are
+    # counted in neither resolved nor recorded.
+    st = {"a": {"type": "action", "status": "open", "ts": 10},
+          "b": {"type": "action", "status": "done", "ts": 20},
+          "c": {"type": "task", "status": "open", "ts": 30},
+          "d": {"type": "task", "status": "done", "ts": 40},
+          "e": {"type": "term", "term": "x", "ts": 50}}
+    s = summarize(st)
+    assert s["open_actions"] == 1 and s["open_tasks"] == 1
+    assert s["resolved"] == 2 and s["recorded"] == 4, "terms are excluded from the meter"
+    assert s["pct"] == 50
+    assert s["latest"] == 50, "latest spans every event, terms included"
+    assert summarize({})["pct"] == 100, "nothing recorded means nothing outstanding"
+    assert summarize({})["latest"] == 0
+
+    # roll_up: sum the sessions, never average their percentages. These are the
+    # real phephree numbers: 0/5 on the busy day and 4/7 on the quiet one.
+    busy = {"open_actions": 3, "open_tasks": 2, "resolved": 0, "recorded": 5, "pct": 0, "latest": 99}
+    quiet = {"open_actions": 1, "open_tasks": 2, "resolved": 4, "recorded": 7, "pct": 57, "latest": 50}
+    r = roll_up([busy, quiet])
+    assert (r["resolved"], r["recorded"]) == (4, 12)
+    assert r["pct"] == 33, "summed, not averaged - averaging would give 29"
+    assert r["open_actions"] == 4 and r["open_tasks"] == 4
+    assert r["latest"] == 99, "a group is as recent as its newest session"
+    assert roll_up([])["pct"] == 100 and roll_up([])["latest"] == 0
     print("ok")
 
 
