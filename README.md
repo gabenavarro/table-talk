@@ -22,8 +22,10 @@ the full cumulative glossary.
 Requires Python ≥3.12, [uv](https://docs.astral.sh/uv/) (dashboard only), and
 Claude Code (skill).
 
-    git clone git@github.com:gabenavarro/table-talk.git
+    git clone https://github.com/gabenavarro/table-talk.git
     cd table-talk && ./install.sh
+
+install.sh symlinks the CLI into ~/.local/bin — make sure that's on your PATH.
 
 ## Use
 
