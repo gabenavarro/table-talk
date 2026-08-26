@@ -116,6 +116,11 @@ body{background:var(--bg);color:var(--ink);margin:0}
 .row:hover{background:var(--sel)}
 .row.changed{border-left-color:var(--act)}
 .row.changed-job{border-left-color:var(--job)}
+/* the filter dims, it never hides — an open action is never removed from the wall */
+.tt-dim{opacity:.35}
+/* colour only - padding or weight changes advance width, re-wraps the
+   paragraph, and destroys the zero-reflow property the dim treatment exists for */
+.tt-hit{background:var(--gls);color:var(--bg);border-radius:2px}
 .row .ttl{color:var(--ink);line-height:1.5}
 /* why/rec are prose, hung off the action on real box-drawing guides */
 .sub{display:grid;grid-template-columns:20px 28px 1fr;gap:6px;margin-top:2px;
