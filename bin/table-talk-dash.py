@@ -58,6 +58,7 @@ body{ background:var(--ctp-base); color:var(--ctp-text); }
 .tt td:first-child,.tt th:first-child{ font-family:ui-monospace,'JetBrains Mono','Fira Code',monospace; }
 .tt td:first-child{ white-space:nowrap; }
 .tt-age{ color:var(--ctp-subtext); }
+.tt-clear{ color:var(--ctp-green); font-size:.85rem; }
 .tt-search .q-field__native{ color:var(--ctp-text); }
 .tt-search .q-field__native::placeholder{ color:var(--ctp-subtext); opacity:.7; }
 .tt-rollup{ color:var(--ctp-subtext); }
@@ -274,6 +275,12 @@ def main(port):
                 tables[key] = ui.table(columns=columns(key), rows=data[key],
                                        row_key=row_key).props("dense flat").classes("w-full tt")
                 search.bind_value_to(tables[key], "filter")
+                if key == "action":
+                    with ui.row().classes("items-center gap-1 tt-clear") as allclear:
+                        ui.icon("check_circle", size="18px")
+                        ui.label("no open actions")
+                    tables[key].set_visibility(bool(data[key]))
+                    allclear.set_visibility(not data[key])
             exp = ui.expansion(f"{len(data['done'])} done").classes("w-full opacity-50")
             with exp:
                 tables["done"] = ui.table(columns=columns("done"), rows=data["done"],
@@ -281,7 +288,8 @@ def main(port):
                 search.bind_value_to(tables["done"], "filter")
             exp.set_visibility(bool(data["done"]))
         return {"el": card_el, "tables": tables, "labels": labels, "expansion": exp,
-                "data": data, "meta": meta, "tip": tip, "latest_ts": latest, "age_txt": None}
+                "allclear": allclear, "data": data, "meta": meta, "tip": tip,
+                "latest_ts": latest, "age_txt": None}
 
     container = ui.column().classes("w-full")
 
@@ -295,7 +303,11 @@ def main(port):
             cards.clear()
             with container:
                 if not files:
-                    ui.label("no sessions yet - record something with the table-talk CLI").classes("m-8 text-gray-500")
+                    with ui.column().classes("items-center w-full m-8 opacity-60"):
+                        ui.icon("inbox", size="3rem")
+                        ui.label("no sessions yet").classes("text-lg")
+                        ui.label("record something: table-talk action \"…\" --why \"…\" --rec \"…\"") \
+                            .classes("text-sm tt-session")
                 for p in files:
                     state = fold(p)
                     cards[p] = build_card(p, card_data(state), latest_ts(state))
@@ -315,6 +327,8 @@ def main(port):
                 card["expansion"].set_text(f"{len(data['done'])} done")
                 card["expansion"].set_visibility(bool(data["done"]))
                 card["el"].style(f"border-left:4px solid var(--ctp-{accent(data)})")
+                card["tables"]["action"].set_visibility(bool(data["action"]))
+                card["allclear"].set_visibility(not data["action"])
                 if (lt := latest_ts(state)) != card["latest_ts"]:
                     card["latest_ts"] = lt
                     card["tip"].set_text(stamp(lt))
