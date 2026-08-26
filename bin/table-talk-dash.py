@@ -50,6 +50,11 @@ body{ background:var(--ctp-base); color:var(--ctp-text); }
 .q-table tbody tr:hover{ background:color-mix(in srgb, var(--ctp-surface0) 45%, transparent); }
 .q-table__bottom{ color:var(--ctp-subtext); }
 .q-expansion-item .q-item{ color:var(--ctp-subtext); }
+.nicegui-content{ max-width:1100px; margin:0 auto; }
+.tt td,.tt th{ font-variant-numeric:tabular-nums; }
+.tt td{ white-space:normal; overflow-wrap:anywhere; vertical-align:top; }
+.tt td:first-child,.tt th:first-child{ font-family:ui-monospace,'JetBrains Mono','Fira Code',monospace; }
+.tt td:first-child{ white-space:nowrap; }
 .tt-rollup{ color:var(--ctp-subtext); }
 .tt-rollup-hot{ color:var(--ctp-red); font-weight:600; }
 .tt-pulse{ color:var(--ctp-green); transition:opacity .9s ease; }
@@ -160,6 +165,7 @@ def selftest():
     assert accent({"action": [1], "task": []}) == "red"
     assert accent({"action": [], "task": [1]}) == "blue"
     assert accent({"action": [], "task": []}) == "green"
+    assert "font-variant-numeric:tabular-nums" in THEME_CSS and "max-width:1100px" in THEME_CSS
     print("ok")
 
 
@@ -220,11 +226,11 @@ def main(port):
             for _, key, row_key in SECTIONS:
                 labels[key] = ui.label(section_label(key, len(data[key]))).classes("tt-sec")
                 tables[key] = ui.table(columns=columns(key), rows=data[key],
-                                       row_key=row_key).classes("w-full")
+                                       row_key=row_key).props("dense flat").classes("w-full tt")
             exp = ui.expansion(f"{len(data['done'])} done").classes("w-full opacity-50")
             with exp:
                 tables["done"] = ui.table(columns=columns("done"), rows=data["done"],
-                                          row_key="id").classes("w-full")
+                                          row_key="id").props("dense flat").classes("w-full tt")
             exp.set_visibility(bool(data["done"]))
         return {"el": card_el, "tables": tables, "labels": labels, "expansion": exp, "data": data}
 
