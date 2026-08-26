@@ -50,6 +50,14 @@ def columns(typ):
              "sortable": True} for c in COLS[typ]]
 
 
+def card_data(state):
+    """Everything one card renders; pure and comparable, so ticks can no-op on unchanged data."""
+    return {"action": rows(state, "action", done=False),
+            "task": rows(state, "task", done=False),
+            "term": rows(state, "term"),
+            "done": done_rows(state)}
+
+
 def selftest():
     import tempfile
     with tempfile.TemporaryDirectory() as td:
@@ -68,35 +76,71 @@ def selftest():
         assert [r["term"] for r in rows(s, "term")] == ["FBA"], "terms are cumulative"
         assert done_rows(s) == [{"id": "a1b2", "type": "action", "summary": "bg"}]
         assert [c["name"] for c in columns("action")] == ["id", "background", "why", "rec"]
+        assert card_data(s) == card_data(fold(p)), "card_data must be stable for change-gating"
+        with open(p, "a") as fh:
+            fh.write('{"id":"c3d4","progress":"epoch 4","ts":6}\n')
+        after = card_data(fold(p))
+        assert after != card_data(s) and after["task"][0]["progress"] == "epoch 4", \
+            "card_data must change when an event lands"
     print("ok")
+
+
+SECTIONS = (("🔴 Actions needed", "action", "id"),
+            ("🔵 Background work", "task", "id"),
+            ("📖 Glossary (cumulative)", "term", "term"))
 
 
 def main(port):
     from nicegui import ui
 
-    @ui.refreshable
-    def view():
-        files = sorted(DATA_DIR.glob("*.jsonl"), reverse=True)
-        if not files:
-            ui.label("no sessions yet - record something with the table-talk CLI").classes("m-8 text-gray-500")
-            return
-        for path in files:
-            state = fold(path)
-            with ui.card().classes("w-full"):
-                ui.label(path.stem).classes("text-lg font-bold")
-                ui.label("🔴 Actions needed")
-                ui.table(columns=columns("action"), rows=rows(state, "action", done=False), row_key="id").classes("w-full")
-                ui.label("🔵 Background work")
-                ui.table(columns=columns("task"), rows=rows(state, "task", done=False), row_key="id").classes("w-full")
-                ui.label("📖 Glossary (cumulative)")
-                ui.table(columns=columns("term"), rows=rows(state, "term"), row_key="term").classes("w-full")
-                if (dr := done_rows(state)):
-                    with ui.expansion(f"{len(dr)} done").classes("w-full opacity-50"):
-                        ui.table(columns=columns("done"), rows=dr, row_key="id").classes("w-full")
+    cards = {}    # path -> {"tables": {key: ui.table}, "expansion": ui.expansion, "data": card_data}
+    built = None  # file list the DOM was last built for; None = never built
 
-    view()
-    # ponytail: full re-glob+refold every tick per tab; mtime-gate if files reach hundreds
-    ui.timer(2.0, view.refresh)
+    def build_card(path, data):
+        with ui.card().classes("w-full"):
+            ui.label(path.stem).classes("text-lg font-bold")
+            tables = {}
+            for label, key, row_key in SECTIONS:
+                ui.label(label)
+                tables[key] = ui.table(columns=columns(key), rows=data[key],
+                                       row_key=row_key).classes("w-full")
+            exp = ui.expansion(f"{len(data['done'])} done").classes("w-full opacity-50")
+            with exp:
+                tables["done"] = ui.table(columns=columns("done"), rows=data["done"],
+                                          row_key="id").classes("w-full")
+            exp.set_visibility(bool(data["done"]))
+        return {"tables": tables, "expansion": exp, "data": data}
+
+    container = ui.column().classes("w-full")
+
+    def tick():
+        nonlocal built
+        files = sorted(DATA_DIR.glob("*.jsonl"), reverse=True)
+        if files != built:  # session file appeared/disappeared: rebuild structure (only case that resets scroll)
+            container.clear()
+            cards.clear()
+            with container:
+                if not files:
+                    ui.label("no sessions yet - record something with the table-talk CLI").classes("m-8 text-gray-500")
+                for p in files:
+                    cards[p] = build_card(p, card_data(fold(p)))
+            built = files
+            return
+        for p, card in cards.items():  # data-only change: mutate rows in place so scroll and sort survive
+            data = card_data(fold(p))
+            if data == card["data"]:
+                continue
+            for key, table in card["tables"].items():
+                if data[key] != card["data"][key]:
+                    table.rows[:] = data[key]
+                    table.update()
+            card["expansion"].set_text(f"{len(data['done'])} done")
+            card["expansion"].set_visibility(bool(data["done"]))
+            card["data"] = data
+
+    tick()
+    # ponytail: full re-glob+refold every tick; mtime-gate if files reach hundreds
+    ui.timer(2.0, tick)
     ui.run(host="127.0.0.1", port=port, show=False, reload=False, title="table-talk")
 
 
