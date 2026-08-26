@@ -59,6 +59,34 @@ def parse_stem(stem):
     return (m.group(1), m.group(2)) if m else ("", stem)
 
 
+_PCT = re.compile(r"(\d{1,3}(?:\.\d+)?)\s*%")
+_FRAC = re.compile(r"(\d+)\s*(?:/|\s+of\s+)\s*(\d+)")
+
+
+def percent(text):
+    """Completion read out of free-text progress, or None when it cannot be read.
+
+    An explicit percentage always wins over a fraction, which is what stops
+    '(58% of 3000). 8/8 GPUs busy' from reporting a finished run. Anything
+    unreadable returns None and is drawn as an indeterminate sweep rather than
+    an invented number.
+
+    Known limitation, accepted: a bare '8/8 GPUs busy' with no percentage
+    anywhere reads as 100%. Writing an explicit percentage is the reliable form.
+    """
+    if not text:
+        return None
+    m = _PCT.search(text)
+    if m:
+        return max(0, min(100, round(float(m.group(1)))))
+    m = _FRAC.search(text)
+    if m:
+        num, den = int(m.group(1)), int(m.group(2))
+        if den > 0:
+            return max(0, min(100, round(100 * num / den)))
+    return None
+
+
 def selftest():
     import tempfile
     with tempfile.TemporaryDirectory() as td:
@@ -86,6 +114,22 @@ def selftest():
     assert parse_stem("2026-08-26-gcp-aws-xfer") == ("2026-08-26", "gcp-aws-xfer"), \
         "a project name may contain hyphens"
     assert parse_stem("no-date-here") == ("", "no-date-here"), "an undated stem is all project"
+
+    # percent: an explicit percentage always beats a fraction in the same string.
+    # This exact string is real progress from the alpha-lac campaign; reading the
+    # trailing '8/8 GPUs busy' would claim a 58%-done run had finished.
+    assert percent("401 cells sealed, 1747 passing (58% of 3000). 8/8 GPUs busy") == 58
+    assert percent("epoch 3/10") == 30
+    assert percent("3 of 10 shards") == 30
+    assert percent("100%") == 100
+    assert percent("58.6% done") == 59, "percentages round to the nearest integer"
+    assert percent("done 12/8") == 100, "over-complete clamps to 100"
+    assert percent("0/10") == 0
+    assert percent("split 5/0") is None, "a zero denominator is not a percentage"
+    assert percent("Last sync 16:01:58Z OK, 399 sealed cells") is None
+    assert percent("Blocked on capacity (see 9a70), not on code") is None
+    assert percent("Seeds 8042000-8042328 planned") is None, "a numeric range is not a fraction"
+    assert percent("") is None and percent(None) is None
     print("ok")
 
 
