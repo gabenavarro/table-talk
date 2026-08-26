@@ -160,6 +160,25 @@ def fold(path):
     return state
 
 
+_fold_cache = {}  # path -> ((st_mtime, st_size), folded_state)
+
+
+def fold_cached(path):
+    """fold(), but re-parse a file only when its mtime/size changed since last poll.
+    Steady state collapses the 2s tick to O(files stat) regardless of history size."""
+    try:
+        st = path.stat()
+    except FileNotFoundError:
+        return {}
+    key = (st.st_mtime, st.st_size)
+    hit = _fold_cache.get(path)
+    if hit and hit[0] == key:
+        return hit[1]
+    state = fold(path)
+    _fold_cache[path] = (key, state)
+    return state
+
+
 def rows(state, typ, done=None):
     out = [e for e in state.values() if e.get("type") == typ
            and (done is None or (e.get("status") == "done") == done)]
@@ -213,6 +232,13 @@ def selftest():
             fh.write(b"\xff\xfe bad utf8\n")
         assert fold(p)["a1b2"]["why"] == "w", "invalid utf-8 line must not break fold"
         assert fold(Path(td) / "missing.jsonl") == {}, "missing file folds to empty"
+        # fold_cached: same result as fold, and re-reads when the file changes
+        assert fold_cached(p) == fold(p), "cached fold matches uncached"
+        before = fold_cached(p)
+        with open(p, "a") as fh:
+            fh.write('{"id":"z9z9","type":"term","term":"Z","intuitive":"i","technical":"t","ts":9}\n')
+        assert "z9z9" in fold_cached(p) and "z9z9" not in before, "cache invalidates on file change"
+        assert fold_cached(Path(td) / "missing.jsonl") == {}, "cached fold tolerates missing file"
     assert "--ctp-base:#eff1f5" in THEME_CSS and "--ctp-base:#1e1e2e" in THEME_CSS, \
         "both Latte and Mocha palettes must be defined"
     assert "body.body--dark" in THEME_CSS, "dark palette must key off Quasar's body--dark"
@@ -354,12 +380,12 @@ def main(port):
                         ui.label("record something: table-talk action \"…\" --why \"…\" --rec \"…\"") \
                             .classes("text-sm tt-session")
                 for p in files:
-                    state = fold(p)
+                    state = fold_cached(p)
                     cards[p] = build_card(p, card_data(state), latest_ts(state))
             built = files
         else:
             for p, card in cards.items():  # data-only change: mutate rows in place so scroll and sort survive
-                state = fold(p)
+                state = fold_cached(p)
                 data = card_data(state)
                 if data == card["data"]:
                     continue
@@ -393,7 +419,7 @@ def main(port):
         pulse.style(f"opacity:{0.9 if flip else 0.35}")
 
     tick()
-    # ponytail: full re-glob+refold every tick; mtime-gate if files reach hundreds
+    # fold_cached re-parses only changed files; steady-state tick is O(files stat)
     ui.timer(2.0, tick)
     ui.run(host="127.0.0.1", port=port, show=False, reload=False, title="table-talk", favicon="🗣")
 
