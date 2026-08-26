@@ -127,6 +127,47 @@ def roll_up(summaries):
     return tot
 
 
+SORTS = ("recent", "actions", "project")
+
+
+def group_sessions(sessions):
+    """[(stem, folded_state)] -> one group per project, newest file first.
+
+    index is the tmux window index within the project: phephree:0 is the newest
+    phephree file, phephree:1 the one before it. Groups keep first-seen order;
+    sort_groups imposes the display order.
+    """
+    order, by_project = [], {}
+    for key, state in sessions:
+        date, project = parse_stem(key)
+        if project not in by_project:
+            by_project[project] = []
+            order.append(project)
+        by_project[project].append({"key": key, "date": date, "summary": summarize(state)})
+    groups = []
+    for project in order:
+        rows = sorted(by_project[project], key=lambda r: -r["summary"]["latest"])
+        for i, row in enumerate(rows):
+            row["index"] = i
+        group = roll_up([r["summary"] for r in rows])
+        group["project"] = project
+        group["sessions"] = rows
+        groups.append(group)
+    return groups
+
+
+def sort_groups(groups, mode):
+    """Order the drawer. Every key falls back to recency so the order is total
+    and stable; children always read newest-first regardless of group order."""
+    if mode == "project":
+        key = lambda g: (g["project"].lower(), -g["latest"])          # noqa: E731
+    elif mode == "actions":
+        key = lambda g: (-g["open_actions"], -g["latest"])            # noqa: E731
+    else:
+        key = lambda g: (-g["latest"], g["project"].lower())          # noqa: E731
+    return sorted(groups, key=key)
+
+
 def selftest():
     import tempfile
     with tempfile.TemporaryDirectory() as td:
@@ -196,6 +237,36 @@ def selftest():
     assert r["open_actions"] == 4 and r["open_tasks"] == 4
     assert r["latest"] == 99, "a group is as recent as its newest session"
     assert roll_up([])["pct"] == 100 and roll_up([])["latest"] == 0
+
+    def _sess(n_open_actions, ts):
+        st = {f"o{i}": {"type": "action", "status": "open", "ts": ts}
+              for i in range(n_open_actions)}
+        st["z"] = {"type": "action", "status": "done", "ts": ts}
+        return st
+
+    sessions = [("2026-08-26-phephree", _sess(3, 900)),
+                ("2026-08-26-table-talk", _sess(2, 950)),
+                ("2026-08-25-phephree", _sess(1, 500)),
+                ("2026-08-24-gcp-aws-xfer", _sess(0, 100))]
+    groups = group_sessions(sessions)
+    assert [g["project"] for g in groups] == ["phephree", "table-talk", "gcp-aws-xfer"]
+    phe = groups[0]
+    assert len(phe["sessions"]) == 2 and phe["open_actions"] == 4
+    assert [s["index"] for s in phe["sessions"]] == [0, 1], "index 0 is the newest file"
+    assert [s["date"] for s in phe["sessions"]] == ["2026-08-26", "2026-08-25"]
+    assert phe["sessions"][0]["key"] == "2026-08-26-phephree"
+    assert len(groups[2]["sessions"]) == 1, "a single-session project is still a group of one"
+
+    by_recent = sort_groups(groups, "recent")
+    assert [g["project"] for g in by_recent] == ["table-talk", "phephree", "gcp-aws-xfer"]
+    by_actions = sort_groups(groups, "actions")
+    assert [g["project"] for g in by_actions] == ["phephree", "table-talk", "gcp-aws-xfer"]
+    by_project = sort_groups(groups, "project")
+    assert [g["project"] for g in by_project] == ["gcp-aws-xfer", "phephree", "table-talk"]
+    assert [s["date"] for s in by_project[1]["sessions"]] == ["2026-08-26", "2026-08-25"], \
+        "children always read newest-first whatever the group order"
+    assert sort_groups(groups, "nonsense") == by_recent, "an unknown sort falls back to recent"
+    assert SORTS == ("recent", "actions", "project")
     print("ok")
 
 
