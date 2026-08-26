@@ -275,6 +275,8 @@ def main(port):
     ui.add_head_html(TOAST_JS)
     dark = ui.dark_mode()
     mode = app.storage.general.get("theme", "system")
+    if mode not in THEME_MODES:  # a hand-edited/stale storage value must not crash startup
+        mode = "system"
 
     def apply_theme(m):
         {"system": dark.auto, "light": dark.disable, "dark": dark.enable}[m]()
