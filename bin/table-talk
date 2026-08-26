@@ -1,0 +1,184 @@
+#!/usr/bin/env python3
+"""table-talk: record actions, background tasks, and technical terms for the
+table-talk reply protocol. Stdlib only — recording must never need the network.
+View: `table-talk serve` -> http://127.0.0.1:8731"""
+import argparse
+import json
+import os
+import secrets
+import shutil
+import sys
+import time
+from pathlib import Path
+
+DATA_DIR = Path(os.environ.get("TABLE_TALK_DIR", str(Path.home() / ".local/share/table-talk")))
+
+
+def fold(path):
+    """Current state of one file: shallow-merge events by id, in file order.
+    Contract shared with table-talk-dash.py; both selftests pin it."""
+    state = {}
+    for n, line in enumerate(path.read_text().splitlines(), 1):
+        if not line.strip():
+            continue
+        try:
+            ev = json.loads(line)
+            state[ev["id"]] = {**state.get(ev["id"], {}), **ev}
+        except (json.JSONDecodeError, TypeError, KeyError):
+            print(f"warning: skipped malformed line {path.name}:{n}", file=sys.stderr)
+    return state
+
+
+def session_file(project=None):
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    p = DATA_DIR / f"{time.strftime('%Y-%m-%d')}-{project or Path.cwd().name}.jsonl"
+    p.touch()
+    return p
+
+
+def append(path, ev):
+    with open(path, "a") as f:
+        f.write(json.dumps(ev) + "\n")
+
+
+def new_id(state):
+    while (i := secrets.token_hex(2)) in state:
+        pass
+    return i
+
+
+def find_file_with_id(id_):
+    for path in sorted(DATA_DIR.glob("*.jsonl"), reverse=True):
+        if id_ in fold(path):
+            return path
+    return None
+
+
+def add_event(project, fields):
+    f = session_file(project)
+    i = new_id(fold(f))
+    append(f, {"id": i, "ts": int(time.time()), **fields})
+    return i
+
+
+def add_term(path, term, intuitive, technical):
+    """Same term (case-insensitive) in this file -> reuse id, update definitions."""
+    state = fold(path)
+    existing = next((i for i, e in state.items() if e.get("type") == "term"
+                     and e.get("term", "").lower() == term.lower()), None)
+    i = existing or new_id(state)
+    append(path, {"id": i, "type": "term", "term": term, "intuitive": intuitive,
+                  "technical": technical, "ts": int(time.time())})
+    return i
+
+
+def update(id_, fields):
+    """Append a partial update to the file that contains id_ (folding is per-file)."""
+    f = find_file_with_id(id_)
+    if not f:
+        sys.exit(f"error: id '{id_}' not found in {DATA_DIR}")
+    append(f, {"id": id_, "ts": int(time.time()), **fields})
+
+
+def cmd_show(project):
+    pattern = f"*-{project}.jsonl" if project else "*.jsonl"
+    for path in sorted(DATA_DIR.glob(pattern)):
+        print(f"== {path.stem}")
+        for e in fold(path).values():
+            print(json.dumps(e))
+
+
+def cmd_serve(port):
+    dash = Path(__file__).resolve().parent / "table-talk-dash.py"
+    uv = shutil.which("uv")
+    if not uv:
+        sys.exit("error: uv not found on PATH - install from https://docs.astral.sh/uv/")
+    os.execv(uv, [uv, "run", "--script", str(dash), "--port", str(port)])
+
+
+def selftest():
+    import tempfile
+    global DATA_DIR
+    with tempfile.TemporaryDirectory() as td:
+        DATA_DIR = Path(td)
+        f = session_file("proj")
+        append(f, {"id": "a1b2", "type": "action", "status": "open",
+                   "background": "bg", "why": "w", "rec": "r", "ts": 1})
+        append(f, {"id": "a1b2", "status": "done", "ts": 2})
+        s = fold(f)
+        assert s["a1b2"]["status"] == "done", "update must apply"
+        assert s["a1b2"]["why"] == "w", "partial update must preserve other fields"
+        with open(f, "a") as fh:
+            fh.write("not json\n")
+        assert fold(f)["a1b2"]["background"] == "bg", "malformed line must not break fold"
+        i1 = add_term(f, "FVA", "v1", "t1")
+        i2 = add_term(f, "fva", "v2", "t2")
+        assert i1 == i2, "term dedupe is case-insensitive"
+        assert fold(f)[i1]["intuitive"] == "v2", "term re-add updates definitions"
+        assert find_file_with_id("a1b2") == f
+        assert find_file_with_id("ffff") is None
+        i3 = add_event("proj", {"type": "task", "status": "open", "what": "x"})
+        update(i3, {"progress": "50%"})
+        assert fold(f)[i3]["progress"] == "50%" and fold(f)[i3]["what"] == "x"
+        assert len(i3) == 4
+    print("ok")
+
+
+def main():
+    p = argparse.ArgumentParser(prog="table-talk", description=__doc__)
+    p.add_argument("--selftest", action="store_true", help=argparse.SUPPRESS)
+    sub = p.add_subparsers(dest="cmd")
+
+    a = sub.add_parser("action", help="record a decision needed from the user")
+    a.add_argument("background")
+    a.add_argument("--why", required=True)
+    a.add_argument("--rec", required=True)
+    a.add_argument("--project")
+
+    t = sub.add_parser("task", help="record background work")
+    t.add_argument("what")
+    t.add_argument("--project")
+
+    pr = sub.add_parser("progress", help="update progress on an item")
+    pr.add_argument("id")
+    pr.add_argument("text")
+
+    d = sub.add_parser("done", help="mark an item done")
+    d.add_argument("id")
+
+    tm = sub.add_parser("term", help="record a technical term")
+    tm.add_argument("term")
+    tm.add_argument("--intuitive", required=True)
+    tm.add_argument("--technical", required=True)
+    tm.add_argument("--project")
+
+    sh = sub.add_parser("show", help="dump folded state")
+    sh.add_argument("project", nargs="?")
+
+    sv = sub.add_parser("serve", help="launch the dashboard")
+    sv.add_argument("--port", type=int, default=8731)
+
+    args = p.parse_args()
+    if args.selftest:
+        selftest()
+    elif args.cmd == "action":
+        print(add_event(args.project, {"type": "action", "status": "open",
+              "background": args.background, "why": args.why, "rec": args.rec}))
+    elif args.cmd == "task":
+        print(add_event(args.project, {"type": "task", "status": "open", "what": args.what}))
+    elif args.cmd == "progress":
+        update(args.id, {"progress": args.text})
+    elif args.cmd == "done":
+        update(args.id, {"status": "done"})
+    elif args.cmd == "term":
+        print(add_term(session_file(args.project), args.term, args.intuitive, args.technical))
+    elif args.cmd == "show":
+        cmd_show(args.project)
+    elif args.cmd == "serve":
+        cmd_serve(args.port)
+    else:
+        p.print_help()
+
+
+if __name__ == "__main__":
+    main()
