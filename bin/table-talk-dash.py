@@ -58,6 +58,8 @@ body{ background:var(--ctp-base); color:var(--ctp-text); }
 .tt td:first-child,.tt th:first-child{ font-family:ui-monospace,'JetBrains Mono','Fira Code',monospace; }
 .tt td:first-child{ white-space:nowrap; }
 .tt-age{ color:var(--ctp-subtext); }
+.tt-search .q-field__native{ color:var(--ctp-text); }
+.tt-search .q-field__native::placeholder{ color:var(--ctp-subtext); opacity:.7; }
 .tt-rollup{ color:var(--ctp-subtext); }
 .tt-rollup-hot{ color:var(--ctp-red); font-weight:600; }
 .tt-pulse{ color:var(--ctp-green); transition:opacity .9s ease; }
@@ -81,6 +83,17 @@ document.addEventListener('DOMContentLoaded', () => {
       sync();
     }
   }, 500);
+});
+</script>"""
+
+# '/' focuses the filter box unless the user is already typing somewhere.
+HOTKEY_JS = """<script>
+document.addEventListener('keydown', e => {
+  if (e.key === '/' && !['INPUT', 'TEXTAREA'].includes(document.activeElement.tagName)) {
+    e.preventDefault();
+    const el = document.querySelector('.tt-search input');
+    if (el) el.focus();
+  }
 });
 </script>"""
 
@@ -172,6 +185,7 @@ def selftest():
     assert ago(0, now=30) == "just now" and ago(0, now=90) == "1m ago"
     assert ago(0, now=7200) == "2h ago" and ago(0, now=200000) == "2d ago"
     assert latest_ts({"a": {"ts": 5}, "b": {"ts": 9}, "c": {}}) == 9 and latest_ts({}) == 0
+    assert "tt-search" in HOTKEY_JS and "preventDefault" in HOTKEY_JS
     print("ok")
 
 
@@ -214,6 +228,7 @@ def main(port):
 
     ui.add_head_html(THEME_CSS)
     ui.add_head_html(TAB_TITLE_JS)
+    ui.add_head_html(HOTKEY_JS)
     dark = ui.dark_mode()
     mode = app.storage.general.get("theme", "system")
 
@@ -225,6 +240,8 @@ def main(port):
     with ui.header().classes("tt-header items-center"):
         ui.label("table-talk").classes("text-lg font-bold tt-title")
         ui.space()
+        search = ui.input(placeholder="filter — press /").props(
+            "clearable dense borderless debounce=200").classes("w-56 tt-search")
         pulse = ui.icon("circle", size="10px").classes("tt-pulse").style("opacity:0.35")
         rollup = ui.label("").props("id=tt-rollup aria-live=polite").classes("text-sm tt-rollup")
 
@@ -256,10 +273,12 @@ def main(port):
                 labels[key] = ui.label(section_label(key, len(data[key]))).classes("tt-sec")
                 tables[key] = ui.table(columns=columns(key), rows=data[key],
                                        row_key=row_key).props("dense flat").classes("w-full tt")
+                search.bind_value_to(tables[key], "filter")
             exp = ui.expansion(f"{len(data['done'])} done").classes("w-full opacity-50")
             with exp:
                 tables["done"] = ui.table(columns=columns("done"), rows=data["done"],
                                           row_key="id").props("dense flat").classes("w-full tt")
+                search.bind_value_to(tables["done"], "filter")
             exp.set_visibility(bool(data["done"]))
         return {"el": card_el, "tables": tables, "labels": labels, "expansion": exp,
                 "data": data, "meta": meta, "tip": tip, "latest_ts": latest, "age_txt": None}
