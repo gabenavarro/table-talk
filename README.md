@@ -38,10 +38,11 @@ install.sh symlinks the CLI into ~/.local/bin — make sure that's on your PATH.
 
 ## Use
 
-    table-talk action "Choose ref genome" --why "blocks training" --rec "R64-1-1"
-    table-talk task "Training GPN model"
-    table-talk progress b210 "epoch 3/10"
-    table-talk done a3f9
+    # each recording command prints a 4-hex id; capture it to update or close the item
+    id=$(table-talk action "Choose ref genome" --why "blocks training" --rec "R64-1-1")
+    tid=$(table-talk task "Training GPN model")
+    table-talk progress "$tid" "epoch 3/10"
+    table-talk done "$id"
     table-talk term "FVA" --intuitive "range of possible flux" --technical "LP min/max per reaction at fixed optimum"
     table-talk show            # plain-text dump
     table-talk serve           # dashboard
