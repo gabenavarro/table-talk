@@ -4,6 +4,7 @@ table-talk reply protocol. Stdlib only — recording must never need the network
 View: `table-talk serve` -> http://127.0.0.1:8731"""
 import argparse
 import fcntl
+import glob
 import json
 import os
 import re
@@ -117,7 +118,7 @@ def update(id_, fields):
 
 
 def cmd_show(project):
-    pattern = f"*-{project}.jsonl" if project else "*.jsonl"
+    pattern = f"*-{glob.escape(project)}.jsonl" if project else "*.jsonl"
     for path in sorted(DATA_DIR.glob(pattern)):
         print(f"== {path.stem}")
         for e in fold(path).values():
