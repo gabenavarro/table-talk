@@ -144,13 +144,18 @@ COLS = {
 def fold(path):
     """Shallow-merge events by id, in file order. Same contract as bin/table-talk."""
     state = {}
-    for line in path.read_text().splitlines():
+    try:
+        raw = path.read_bytes()
+    except FileNotFoundError:
+        return state
+    for line in raw.splitlines():
         if not line.strip():
             continue
         try:
-            ev = json.loads(line)
-            state[ev["id"]] = {**state.get(ev["id"], {}), **ev}
-        except (json.JSONDecodeError, TypeError, KeyError):
+            ev = json.loads(line.decode("utf-8"))
+            eid = str(ev["id"])
+            state[eid] = {**state.get(eid, {}), **ev}
+        except (UnicodeDecodeError, json.JSONDecodeError, TypeError, KeyError):
             pass
     return state
 
@@ -204,6 +209,10 @@ def selftest():
         after = card_data(fold(p))
         assert after != card_data(s) and after["task"][0]["progress"] == "epoch 4", \
             "card_data must change when an event lands"
+        with open(p, "ab") as fh:
+            fh.write(b"\xff\xfe bad utf8\n")
+        assert fold(p)["a1b2"]["why"] == "w", "invalid utf-8 line must not break fold"
+        assert fold(Path(td) / "missing.jsonl") == {}, "missing file folds to empty"
     assert "--ctp-base:#eff1f5" in THEME_CSS and "--ctp-base:#1e1e2e" in THEME_CSS, \
         "both Latte and Mocha palettes must be defined"
     assert "body.body--dark" in THEME_CSS, "dark palette must key off Quasar's body--dark"

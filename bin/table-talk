@@ -18,13 +18,18 @@ def fold(path):
     """Current state of one file: shallow-merge events by id, in file order.
     Contract shared with table-talk-dash.py; both selftests pin it."""
     state = {}
-    for n, line in enumerate(path.read_text().splitlines(), 1):
+    try:
+        raw = path.read_bytes()
+    except FileNotFoundError:
+        return state
+    for n, line in enumerate(raw.splitlines(), 1):
         if not line.strip():
             continue
         try:
-            ev = json.loads(line)
-            state[ev["id"]] = {**state.get(ev["id"], {}), **ev}
-        except (json.JSONDecodeError, TypeError, KeyError):
+            ev = json.loads(line.decode("utf-8"))
+            eid = str(ev["id"])
+            state[eid] = {**state.get(eid, {}), **ev}
+        except (UnicodeDecodeError, json.JSONDecodeError, TypeError, KeyError):
             print(f"warning: skipped malformed line {path.name}:{n}", file=sys.stderr)
     return state
 
@@ -111,6 +116,13 @@ def selftest():
         with open(f, "a") as fh:
             fh.write("not json\n")
         assert fold(f)["a1b2"]["background"] == "bg", "malformed line must not break fold"
+        with open(f, "ab") as fh:
+            fh.write(b"\xff\xfe bad utf8\n")
+        assert fold(f)["a1b2"]["background"] == "bg", "invalid utf-8 line must not break fold"
+        assert fold(Path(td) / "does-not-exist.jsonl") == {}, "missing file folds to empty"
+        with open(f, "a") as fh:
+            fh.write('{"id": 77, "type": "task", "what": "int id"}\n')
+        assert "77" in fold(f), "non-string id is reachable as str"
         i1 = add_term(f, "FVA", "v1", "t1")
         i2 = add_term(f, "fva", "v2", "t2")
         assert i1 == i2, "term dedupe is case-insensitive"
