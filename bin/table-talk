@@ -3,12 +3,14 @@
 table-talk reply protocol. Stdlib only — recording must never need the network.
 View: `table-talk serve` -> http://127.0.0.1:8731"""
 import argparse
+import fcntl
 import json
 import os
 import secrets
 import shutil
 import sys
 import time
+from contextlib import contextmanager
 from pathlib import Path
 
 DATA_DIR = Path(os.environ.get("TABLE_TALK_DIR") or str(Path.home() / ".local/share/table-talk"))
@@ -46,10 +48,28 @@ def append(path, ev):
         f.write(json.dumps(ev) + "\n")
 
 
-def new_id(state):
-    while (i := secrets.token_hex(2)) in state:
+def all_ids():
+    """Every id in use across the whole data dir — new ids must avoid all of them."""
+    used = set()
+    for p in DATA_DIR.glob("*.jsonl"):
+        used |= fold(p).keys()
+    return used
+
+
+def new_id():
+    used = all_ids()
+    while (i := secrets.token_hex(2)) in used:
         pass
     return i
+
+
+@contextmanager
+def mint_lock():
+    """Serialize fold+mint+append so concurrent CLIs can't pick or splice the same id."""
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    with open(DATA_DIR / ".lock", "w") as fh:
+        fcntl.flock(fh, fcntl.LOCK_EX)
+        yield
 
 
 def find_file_with_id(id_):
@@ -61,19 +81,21 @@ def find_file_with_id(id_):
 
 def add_event(project, fields):
     f = session_file(project)
-    i = new_id(fold(f))
-    append(f, {"id": i, "ts": int(time.time()), **fields})
+    with mint_lock():
+        i = new_id()
+        append(f, {"id": i, "ts": int(time.time()), **fields})
     return i
 
 
 def add_term(path, term, intuitive, technical):
     """Same term (case-insensitive) in this file -> reuse id, update definitions."""
-    state = fold(path)
-    existing = next((i for i, e in state.items() if e.get("type") == "term"
-                     and e.get("term", "").lower() == term.lower()), None)
-    i = existing or new_id(state)
-    append(path, {"id": i, "type": "term", "term": term, "intuitive": intuitive,
-                  "technical": technical, "ts": int(time.time())})
+    with mint_lock():
+        state = fold(path)
+        existing = next((i for i, e in state.items() if e.get("type") == "term"
+                         and e.get("term", "").lower() == term.lower()), None)
+        i = existing or new_id()
+        append(path, {"id": i, "type": "term", "term": term, "intuitive": intuitive,
+                      "technical": technical, "ts": int(time.time())})
     return i
 
 
@@ -133,6 +155,16 @@ def selftest():
         update(i3, {"progress": "50%"})
         assert fold(f)[i3]["progress"] == "50%" and fold(f)[i3]["what"] == "x"
         assert len(i3) == 4
+        # new_id must avoid ids used in ANY file, not just one
+        other = session_file("other")
+        append(other, {"id": "d00d", "type": "task", "what": "y", "ts": 1})
+        orig = secrets.token_hex
+        draws = iter(["d00d", "beef"])
+        secrets.token_hex = lambda n=2: next(draws)
+        try:
+            assert new_id() == "beef", "new_id must skip an id used in any file"
+        finally:
+            secrets.token_hex = orig
     print("ok")
 
 
