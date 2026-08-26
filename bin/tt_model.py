@@ -168,6 +168,49 @@ def sort_groups(groups, mode):
     return sorted(groups, key=key)
 
 
+def weight(state):
+    """A window's estimated height in arbitrary units, derived from CONTENT.
+
+    Never from measured pixels: those change on every re-render, and a weight
+    that changes makes the packer move windows while they are being read. Done
+    items and terms cost nothing because they live in collapsed sections.
+    Progress text is deliberately not measured - it changes on nearly every
+    poll, and packing must not.
+    """
+    units = 1
+    for ev in state.values():
+        if ev.get("status") == "done":
+            continue
+        typ = ev.get("type")
+        if typ == "action":
+            chars = len(ev.get("background", "")) + len(ev.get("why", "")) + len(ev.get("rec", ""))
+            units += 3 + chars // 110
+        elif typ == "task":
+            units += 2
+    return units
+
+
+def pack(keys, ncols, weights, marked=()):
+    """Greedy shortest-column packing into fixed buckets.
+
+    Marked keys are placed first, which lands them at the top of the leftmost
+    column. Pure and deterministic: the same inputs always produce the same
+    layout, which is what lets the caller skip a re-pack when nothing changed.
+
+    Masonry is deliberately NOT used - it reassigns columns on every content
+    change, which slides a window out from under the reader every 2 s poll.
+    """
+    ncols = max(1, min(ncols, len(keys))) if keys else 1
+    cols = [[] for _ in range(ncols)]
+    load = [0] * ncols
+    rank = {k: i for i, k in enumerate(keys)}
+    for key in sorted(keys, key=lambda k: (k not in marked, rank[k])):
+        i = load.index(min(load))
+        cols[i].append(key)
+        load[i] += weights.get(key, 1)
+    return cols
+
+
 def selftest():
     import tempfile
     with tempfile.TemporaryDirectory() as td:
@@ -267,6 +310,39 @@ def selftest():
         "children always read newest-first whatever the group order"
     assert sort_groups(groups, "nonsense") == by_recent, "an unknown sort falls back to recent"
     assert SORTS == ("recent", "actions", "project")
+
+    # weight: derived from content, never from measured pixels. A done item costs
+    # nothing because it lives in a collapsed section.
+    assert weight({}) == 1, "an empty window still occupies a titlebar"
+    one_action = {"a": {"type": "action", "status": "open",
+                        "background": "b", "why": "w", "rec": "r", "ts": 1}}
+    assert weight(one_action) == 4
+    assert weight({"a": {"type": "task", "status": "open", "what": "x", "ts": 1}}) == 3
+    assert weight({"a": {"type": "action", "status": "done",
+                         "background": "b" * 500, "ts": 1}}) == 1, "done items are collapsed"
+    assert weight({"a": {"type": "term", "term": "x", "ts": 1}}) == 1, "terms are collapsed"
+    longer = {"a": dict(one_action["a"], why="w" * 220)}
+    assert weight(longer) > weight(one_action), "long prose costs extra lines"
+    # progress text must NOT change the weight - it changes on nearly every poll
+    job = {"a": {"type": "task", "status": "open", "what": "x", "progress": "1/10", "ts": 1}}
+    job2 = {"a": {"type": "task", "status": "open", "what": "x",
+                  "progress": "epoch 9/10, still running, no interruption in 45 h", "ts": 1}}
+    assert weight(job) == weight(job2), "progress text must not affect packing"
+
+    # pack: greedy shortest column, deterministic, marked first.
+    w = {"a": 14, "b": 9, "c": 8, "d": 2}
+    # 2 cols: a->0(14) b->1(9) c->1(17) d->0(16)
+    assert pack(["a", "b", "c", "d"], 2, w) == [["a", "d"], ["b", "c"]]
+    # 3 cols: a->0(14) b->1(9) c->2(8) d->2(10) - d joins the lightest column
+    assert pack(["a", "b", "c", "d"], 3, w) == [["a"], ["b"], ["c", "d"]]
+    assert pack(["a", "b", "c", "d"], 1, w) == [["a", "b", "c", "d"]]
+    assert pack(["a", "b", "c", "d"], 2, w) == pack(["a", "b", "c", "d"], 2, w), \
+        "identical inputs must produce an identical layout"
+    assert pack(["a", "b", "c", "d"], 2, w, marked={"d"})[0][0] == "d", \
+        "a marked window lands at the top of the leftmost column"
+    assert pack([], 2, {}) == [[]], "no windows still yields one column"
+    assert pack(["a"], 3, w) == [["a"]], "columns never outnumber windows"
+    assert pack(["a", "b"], 2, {}) == [["a"], ["b"]], "a missing weight defaults to 1"
     print("ok")
 
 
