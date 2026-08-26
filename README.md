@@ -11,6 +11,10 @@ technical terms explained twice (intuitive + precise). Everything is also an
 event in a local log, and a live dashboard shows every session's tables with
 the full cumulative glossary.
 
+![table-talk dashboard in Catppuccin Latte and Mocha](docs/assets/hero.png)
+
+<p align="center"><img src="docs/assets/demo.gif" width="720" alt="Tables filling in live as a Claude session records actions, progress, and terms"></p>
+
 ## How it works
 
 - **CLI** (`bin/table-talk`, Python stdlib, zero deps): appends events to
