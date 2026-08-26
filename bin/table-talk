@@ -11,7 +11,7 @@ import sys
 import time
 from pathlib import Path
 
-DATA_DIR = Path(os.environ.get("TABLE_TALK_DIR", str(Path.home() / ".local/share/table-talk")))
+DATA_DIR = Path(os.environ.get("TABLE_TALK_DIR") or str(Path.home() / ".local/share/table-talk"))
 
 
 def fold(path):

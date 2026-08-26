@@ -11,7 +11,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-DATA_DIR = Path(os.environ.get("TABLE_TALK_DIR", str(Path.home() / ".local/share/table-talk")))
+DATA_DIR = Path(os.environ.get("TABLE_TALK_DIR") or str(Path.home() / ".local/share/table-talk"))
 
 # Catppuccin palettes (anuppuccin): Latte on light, Mocha on dark.
 # Quasar's dark plugin toggles body--dark, so the variables swap with the theme.
