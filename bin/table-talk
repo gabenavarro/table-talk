@@ -6,6 +6,7 @@ import argparse
 import fcntl
 import json
 import os
+import re
 import secrets
 import shutil
 import sys
@@ -36,10 +37,18 @@ def fold(path):
     return state
 
 
+def safe_project(project):
+    """A project name becomes a filename component; keep path separators out of it."""
+    return re.sub(r"[/\\\x00]", "_", project or Path.cwd().name)
+
+
 def session_file(project=None):
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
-    p = DATA_DIR / f"{time.strftime('%Y-%m-%d')}-{project or Path.cwd().name}.jsonl"
-    p.touch()
+    try:
+        DATA_DIR.mkdir(parents=True, exist_ok=True)
+        p = DATA_DIR / f"{time.strftime('%Y-%m-%d')}-{safe_project(project)}.jsonl"
+        p.touch()
+    except OSError as e:
+        sys.exit(f"error: cannot write to data dir {DATA_DIR}: {e}")
     return p
 
 
@@ -165,6 +174,8 @@ def selftest():
             assert new_id() == "beef", "new_id must skip an id used in any file"
         finally:
             secrets.token_hex = orig
+        assert safe_project("a/b") == "a_b" and safe_project("x") == "x", "project separators sanitized"
+        assert session_file("sub/dir").name.endswith("-sub_dir.jsonl"), "slash project does not crash"
     print("ok")
 
 
