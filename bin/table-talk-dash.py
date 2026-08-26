@@ -225,24 +225,37 @@ def _done_row(ev, query):
         _marked(ev.get("background") or ev.get("what", ""), query, "ttl")
 
 
-def _prompt(cls, title, count, toggles=None):
+def _hits(evs, query):
+    """True when a query is live and at least one of these rows matches it.
+    Drives the #57 behaviour: a match inside a collapsed section is an invisible
+    match, so a live query opens the section holding it."""
+    return bool((query or "").strip()) and any(_dim(ev, query) == "" for ev in evs)
+
+
+def _prompt(cls, title, count, toggles=None, opened=None, key="", force=False):
     """A section header as a shell prompt line: '❯ actions --open (3)'.
+
     When `toggles` is given, clicking the line shows or hides that container —
-    this is what keeps the existing collapsed glossary and done sections."""
+    this is what keeps the collapsed glossary and done sections. `opened` is a
+    dict owned by the caller and outliving this render, so a section the user
+    expanded is still expanded after the next poll rebuilds the body. `force`
+    opens the section for this render only, without touching what the user chose.
+    """
     from nicegui import ui
+    shown = force or bool(opened and opened.get(key))
     with ui.element("div").classes(f"pr {cls}") as line:
         ui.label("❯").classes("g")
         ui.label(title)
-        caret = ui.label(f"({count})" + (" ▸" if toggles is not None else "")).classes("n")
+        tail = "" if toggles is None else (" ▾" if shown else " ▸")
+        caret = ui.label(f"({count}){tail}").classes("n")
     if toggles is None:
         return
-    shown = False   # NiceGUI 3.16 has no Element.visible to read back, so track it here
+    toggles.set_visibility(shown)
 
     def flip(_):
-        nonlocal shown
-        shown = not shown
-        toggles.set_visibility(shown)
-        caret.set_text(f"({count}) " + ("▾" if shown else "▸"))
+        opened[key] = not (force or opened[key])
+        toggles.set_visibility(opened[key])
+        caret.set_text(f"({count}) " + ("▾" if opened[key] else "▸"))
 
     line.on("click", flip)
 
@@ -255,8 +268,18 @@ def render_window_body(container, state, newest_action_id, query="", changed=())
     window's data actually changed.
 
     `query` drives dimming and highlighting only, never visibility: see _dim.
+    The one exception is section collapse, which is not filtering: a live query
+    opens a collapsed section holding a match, because a match you cannot see is
+    the same as no match (#57).
+
+    Which sections the user has expanded is kept on the container, which
+    outlives the rebuild, so a poll cannot snap an open panel shut underneath a
+    reader. It dies with the container, so nothing has to clean it up.
     """
     from nicegui import ui
+    opened = getattr(container, "tt_open", None)
+    if opened is None:
+        opened = container.tt_open = {"gls": False, "ok": False}
     container.clear()
     with container:
         acts = open_rows(state, "action")
@@ -274,16 +297,16 @@ def render_window_body(container, state, newest_action_id, query="", changed=())
         for ev in jobs:
             _task_row(ev, query, str(ev["id"]) in changed)
 
-        # Glossary and done stay collapsed by default, as they are today.
-        # Each box is built before the prompt that toggles it, then moved back
-        # under it with move(container, -1).
+        # Glossary and done are collapsed until the user opens them or a query
+        # finds something inside. Each box is built before the prompt that
+        # toggles it, then moved back under it with move(container, -1).
         terms = term_rows(state)
         gls_box = ui.element("div")
         with gls_box:
             for ev in terms:
                 _term_row(ev, query)
-        gls_box.set_visibility(False)
-        _prompt("p-gls", "glossary", len(terms), toggles=gls_box)
+        _prompt("p-gls", "glossary", len(terms), toggles=gls_box,
+                opened=opened, key="gls", force=_hits(terms, query))
         gls_box.move(container, -1)
 
         done = done_rows(state)
@@ -291,8 +314,8 @@ def render_window_body(container, state, newest_action_id, query="", changed=())
         with done_box:
             for ev in done:
                 _done_row(ev, query)
-        done_box.set_visibility(False)
-        _prompt("p-ok", "done", len(done), toggles=done_box)
+        _prompt("p-ok", "done", len(done), toggles=done_box,
+                opened=opened, key="ok", force=_hits(done, query))
         done_box.move(container, -1)
 
 
@@ -334,6 +357,9 @@ def selftest():
     assert _dim(st["a"], "") == "" and _dim(st["a"], "  ") == "", "an empty query dims nothing"
     assert _dim(st["a"], "BG") == "", "a matching row is not dimmed, and matching ignores case"
     assert _dim(st["a"], "kubernetes") == " tt-dim", "a non-matching row dims — it never hides"
+    assert _hits([st["d"]], "flux") is False and _hits([st["d"]], "FBA") is True
+    assert _hits([st["d"]], "") is False, "no query opens nothing"
+    assert _hits([], "FBA") is False
     css = load_css()
     # both palettes, keyed the way the design spec pins them
     assert "--bg:#1d2021" in css and "--surface:#282828" in css, "gruvbox-dark ground and surface"
