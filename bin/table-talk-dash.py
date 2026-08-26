@@ -263,6 +263,7 @@ def selftest():
     assert latest_ts({"a": {"ts": 5}, "b": {"ts": 9}, "c": {}}) == 9 and latest_ts({}) == 0
     assert "tt-search" in HOTKEY_JS and "preventDefault" in HOTKEY_JS
     assert "tt-toast" in TOAST_JS and "tt-toast" in THEME_CSS, "toast script and styles must pair"
+    assert set(EMPTY_STATES) == {"action", "task", "term"}, "every section needs an empty state"
     print("ok")
 
 
@@ -270,6 +271,10 @@ SECTIONS = (("🔴 Actions needed", "action", "id"),
             ("🔵 Background work", "task", "id"),
             ("📖 Glossary (cumulative)", "term", "term"))
 SECTION_TEXT = {key: label for label, key, _ in SECTIONS}
+# (icon, message) shown in place of an empty table — calm, not "No data available".
+EMPTY_STATES = {"action": ("check_circle", "no open actions"),
+                "task": ("done_all", "no background work"),
+                "term": ("menu_book", "no terms yet")}
 
 
 def section_label(key, count):
@@ -349,25 +354,28 @@ def main(port):
                     tip = ui.tooltip(stamp(latest) if latest else "")
             tables = {}
             labels = {}
+            empties = {}
             for _, key, row_key in SECTIONS:
                 labels[key] = ui.label(section_label(key, len(data[key]))).classes("tt-sec")
                 tables[key] = ui.table(columns=columns(key), rows=data[key],
                                        row_key=row_key).props("dense flat").classes("w-full tt")
                 search.bind_value_to(tables[key], "filter")
-                if key == "action":
-                    with ui.row().classes("items-center gap-1 tt-clear") as allclear:
-                        ui.icon("check_circle", size="18px")
-                        ui.label("no open actions")
-                    tables[key].set_visibility(bool(data[key]))
-                    allclear.set_visibility(not data[key])
+                with ui.row().classes("items-center gap-1 tt-clear") as empty:
+                    ui.icon(EMPTY_STATES[key][0], size="18px")
+                    ui.label(EMPTY_STATES[key][1])
+                empties[key] = empty
+                tables[key].set_visibility(bool(data[key]))
+                empty.set_visibility(not data[key])
             exp = ui.expansion(f"{len(data['done'])} done").classes("w-full opacity-50")
             with exp:
                 tables["done"] = ui.table(columns=columns("done"), rows=data["done"],
                                           row_key="id").props("dense flat").classes("w-full tt")
                 search.bind_value_to(tables["done"], "filter")
             exp.set_visibility(bool(data["done"]))
+            # a filter match hidden in the collapsed done panel is invisible — open it while filtering
+            search.bind_value_to(exp, "value", forward=bool)
         return {"el": card_el, "tables": tables, "labels": labels, "expansion": exp,
-                "allclear": allclear, "data": data, "meta": meta, "tip": tip,
+                "empties": empties, "data": data, "meta": meta, "tip": tip,
                 "latest_ts": latest, "age_txt": None}
 
     container = ui.column().classes("w-full")
@@ -406,8 +414,9 @@ def main(port):
                 card["expansion"].set_text(f"{len(data['done'])} done")
                 card["expansion"].set_visibility(bool(data["done"]))
                 card["el"].style(f"border-left:4px solid var(--ctp-{accent(data)})")
-                card["tables"]["action"].set_visibility(bool(data["action"]))
-                card["allclear"].set_visibility(not data["action"])
+                for key, empty in card["empties"].items():
+                    card["tables"][key].set_visibility(bool(data[key]))
+                    empty.set_visibility(not data[key])
                 if (lt := latest_ts(state)) != card["latest_ts"]:
                     card["latest_ts"] = lt
                     card["tip"].set_text(stamp(lt))
