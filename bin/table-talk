@@ -114,6 +114,9 @@ def update(id_, fields):
     f = find_file_with_id(id_)
     if not f:
         sys.exit(f"error: id '{id_}' not found in {DATA_DIR}")
+    typ = fold(f).get(id_, {}).get("type")
+    if typ not in ("action", "task"):
+        sys.exit(f"error: id '{id_}' is a {typ or 'unknown record'}, not an action/task")
     append(f, {"id": id_, "ts": int(time.time()), **fields})
 
 
@@ -177,6 +180,13 @@ def selftest():
             secrets.token_hex = orig
         assert safe_project("a/b") == "a_b" and safe_project("x") == "x", "project separators sanitized"
         assert session_file("sub/dir").name.endswith("-sub_dir.jsonl"), "slash project does not crash"
+        tid = add_term(f, "GUARD", "i", "t")
+        try:
+            update(tid, {"status": "done"})
+            raise AssertionError("update on a term must be rejected")
+        except SystemExit:
+            pass
+        assert "status" not in fold(f)[tid], "a rejected update must not touch the term"
     print("ok")
 
 
