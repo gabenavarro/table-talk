@@ -50,6 +50,9 @@ body{ background:var(--ctp-base); color:var(--ctp-text); }
 .q-table tbody tr:hover{ background:color-mix(in srgb, var(--ctp-surface0) 45%, transparent); }
 .q-table__bottom{ color:var(--ctp-subtext); }
 .q-expansion-item .q-item{ color:var(--ctp-subtext); }
+.tt-rollup{ color:var(--ctp-subtext); }
+.tt-rollup-hot{ color:var(--ctp-red); font-weight:600; }
+.tt-pulse{ color:var(--ctp-green); transition:opacity .9s ease; }
 </style>"""
 
 THEME_MODES = ("system", "light", "dark")
@@ -153,6 +156,8 @@ def main(port):
     with ui.header().classes("tt-header items-center"):
         ui.label("table-talk").classes("text-lg font-bold tt-title")
         ui.space()
+        pulse = ui.icon("circle", size="10px").classes("tt-pulse").style("opacity:0.35")
+        rollup = ui.label("").props("id=tt-rollup aria-live=polite").classes("text-sm tt-rollup")
 
         def cycle():
             nonlocal mode
@@ -185,8 +190,10 @@ def main(port):
 
     container = ui.column().classes("w-full")
 
+    flip = False
+
     def tick():
-        nonlocal built
+        nonlocal built, flip
         files = sorted(DATA_DIR.glob("*.jsonl"), reverse=True)
         if files != built:  # session file appeared/disappeared: rebuild structure (only case that resets scroll)
             container.clear()
@@ -197,18 +204,26 @@ def main(port):
                 for p in files:
                     cards[p] = build_card(p, card_data(fold(p)))
             built = files
-            return
-        for p, card in cards.items():  # data-only change: mutate rows in place so scroll and sort survive
-            data = card_data(fold(p))
-            if data == card["data"]:
-                continue
-            for key, table in card["tables"].items():
-                if data[key] != card["data"][key]:
-                    table.rows[:] = data[key]
-                    table.update()
-            card["expansion"].set_text(f"{len(data['done'])} done")
-            card["expansion"].set_visibility(bool(data["done"]))
-            card["data"] = data
+        else:
+            for p, card in cards.items():  # data-only change: mutate rows in place so scroll and sort survive
+                data = card_data(fold(p))
+                if data == card["data"]:
+                    continue
+                for key, table in card["tables"].items():
+                    if data[key] != card["data"][key]:
+                        table.rows[:] = data[key]
+                        table.update()
+                card["expansion"].set_text(f"{len(data['done'])} done")
+                card["expansion"].set_visibility(bool(data["done"]))
+                card["data"] = data
+        n = sum(len(c["data"]["action"]) for c in cards.values())
+        txt = (f"{n} action{'s' if n != 1 else ''} needed across "
+               f"{len(cards)} session{'s' if len(cards) != 1 else ''}") if n else "all clear"
+        if rollup.text != txt:
+            rollup.set_text(txt)
+            rollup.classes(replace="text-sm tt-rollup" + (" tt-rollup-hot" if n else ""))
+        flip = not flip  # heartbeat: proves the poll is alive without re-rendering anything
+        pulse.style(f"opacity:{0.9 if flip else 0.35}")
 
     tick()
     # ponytail: full re-glob+refold every tick; mtime-gate if files reach hundreds
