@@ -157,6 +157,9 @@ def selftest():
     assert "tt-rollup" in TAB_TITLE_JS and "document.title" in TAB_TITLE_JS
     assert section_label("action", 3) == "🔴 Actions needed · 3"
     assert set(SECTION_TEXT) == {"action", "task", "term"}
+    assert accent({"action": [1], "task": []}) == "red"
+    assert accent({"action": [], "task": [1]}) == "blue"
+    assert accent({"action": [], "task": []}) == "green"
     print("ok")
 
 
@@ -168,6 +171,11 @@ SECTION_TEXT = {key: label for label, key, _ in SECTIONS}
 
 def section_label(key, count):
     return f"{SECTION_TEXT[key]} · {count}"
+
+
+def accent(data):
+    """Card state color: needs the user > working > settled."""
+    return "red" if data["action"] else ("blue" if data["task"] else "green")
 
 
 def main(port):
@@ -204,7 +212,8 @@ def main(port):
     built = None  # file list the DOM was last built for; None = never built
 
     def build_card(path, data):
-        with ui.card().classes("w-full"):
+        with ui.card().classes("w-full").style(
+                f"border-left:4px solid var(--ctp-{accent(data)})") as card_el:
             ui.label(path.stem).classes("text-base font-bold tt-session")
             tables = {}
             labels = {}
@@ -217,7 +226,7 @@ def main(port):
                 tables["done"] = ui.table(columns=columns("done"), rows=data["done"],
                                           row_key="id").classes("w-full")
             exp.set_visibility(bool(data["done"]))
-        return {"tables": tables, "labels": labels, "expansion": exp, "data": data}
+        return {"el": card_el, "tables": tables, "labels": labels, "expansion": exp, "data": data}
 
     container = ui.column().classes("w-full")
 
@@ -248,6 +257,7 @@ def main(port):
                             card["labels"][key].set_text(section_label(key, len(data[key])))
                 card["expansion"].set_text(f"{len(data['done'])} done")
                 card["expansion"].set_visibility(bool(data["done"]))
+                card["el"].style(f"border-left:4px solid var(--ctp-{accent(data)})")
                 card["data"] = data
         n = sum(len(c["data"]["action"]) for c in cards.values())
         txt = (f"{n} action{'s' if n != 1 else ''} needed across "
