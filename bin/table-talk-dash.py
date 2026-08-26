@@ -194,9 +194,13 @@ def done_rows(state):
             for e in rows(state, "action", done=True) + rows(state, "task", done=True)]
 
 
+# Header labels that differ from a bare capitalize — match the reply-table headers in SKILL.md.
+COL_LABELS = {"why": "Why it matters", "rec": "Recommendation"}
+
+
 def columns(typ):
-    return [{"name": c, "label": c.capitalize(), "field": c, "align": "left",
-             "sortable": True} for c in COLS[typ]]
+    return [{"name": c, "label": COL_LABELS.get(c, c.capitalize()), "field": c,
+             "align": "left", "sortable": True} for c in COLS[typ]]
 
 
 def card_data(state):
@@ -225,6 +229,7 @@ def selftest():
         assert [r["term"] for r in rows(s, "term")] == ["FBA"], "terms are cumulative"
         assert done_rows(s) == [{"id": "a1b2", "type": "action", "summary": "bg"}]
         assert [c["name"] for c in columns("action")] == ["id", "background", "why", "rec"]
+        assert [c["label"] for c in columns("action")] == ["Id", "Background", "Why it matters", "Recommendation"]
         assert card_data(s) == card_data(fold(p)), "card_data must be stable for change-gating"
         with open(p, "a") as fh:
             fh.write('{"id":"c3d4","progress":"epoch 4","ts":6}\n')
