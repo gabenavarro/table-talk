@@ -3,6 +3,7 @@
 dependencies outside the standard library, so it can be selftested with plain
 python3 and reasoned about without starting a server."""
 import argparse
+import html
 import json
 import os
 import re
@@ -231,6 +232,37 @@ def matches(state, name, query):
     return any(q in row_text(ev).lower() for ev in state.values())
 
 
+def parts(text, q):
+    """Split text into [(chunk, is_match)], case-insensitive, preserving the
+    original casing and spacing. Matches are non-overlapping, left to right."""
+    if not q:
+        return [(text, False)]
+    low, ql, out, i = text.lower(), q.lower(), [], 0
+    while (j := low.find(ql, i)) != -1:
+        if j > i:
+            out.append((text[i:j], False))
+        out.append((text[j:j + len(ql)], True))
+        i = j + len(ql)
+    if i < len(text):
+        out.append((text[i:], False))
+    return out or [("", False)]
+
+
+def marked(text, q):
+    """Escaped HTML with matched substrings wrapped in a highlight span.
+
+    Escaping happens AFTER the split, never before. Escaping first is broken in
+    both directions: a query of 'a&b' would stop matching 'a&amp;b', and a query
+    of '<span class=' would match the markup just inserted. Splitting on the raw
+    text means source '<', '&' and quotes can never become markup, stay
+    searchable, and our own markup is not in the search space.
+
+    This is the one place ui.html is permitted; the property test pins it.
+    """
+    return "".join(f'<span class="tt-hit">{html.escape(c)}</span>' if hit else html.escape(c)
+                   for c, hit in parts(text, q))
+
+
 def selftest():
     import tempfile
     with tempfile.TemporaryDirectory() as td:
@@ -381,6 +413,30 @@ def selftest():
     assert matches({}, "2026-08-26-empty", "anything") is False
     assert "retrain the model" in row_text(st["a1b2"])
     assert row_text({"id": 77, "type": "task"}).startswith("77"), "a non-string id is safe"
+
+    import html as _html
+    import random as _random
+    assert parts("SEssion", "se") == [("SE", True), ("ssion", False)], "original casing survives"
+    assert parts("abc", "") == [("abc", False)] and parts("", "x") == [("", False)]
+    assert parts("aaa", "aa") == [("aa", True), ("a", False)], "matches are non-overlapping"
+    assert marked("a & b", "&amp;").count("tt-hit") == 0, "an escaped entity must not self-match"
+    assert marked("x", "</span>").count("tt-hit") == 0, "our own markup is not in the search space"
+    assert marked('<script>alert(1)</script>', "script").count("tt-hit") == 2
+    assert "<script>" not in marked('<script>alert(1)</script>', "script"), "hostile text stays text"
+
+    # Property test: stripping our spans must return exactly html.escape(original),
+    # and the chunks must reassemble the source losslessly. ~48k pairs.
+    _strip = re.compile(r'</?span[^>]*>')
+    _rng = _random.Random(20260826)
+    _hostile = ['<script>alert("xss")</script>', 'a & b', '5 < 6 && 7', '"quoted"', "it's",
+                '</span><img src=x onerror=alert(1)>', '&amp;', '<span class="tt-hit">', '']
+    _texts = _hostile + ["".join(_rng.choice('<>&"\'/ abSE&;') for _ in range(_rng.randint(0, 40)))
+                         for _ in range(2000)]
+    for _t in _texts:
+        for _q in ("", "a", "se", "SE", "&", "<", '"', "'", "</span>", "&amp;", "<script>", "ab"):
+            assert _strip.sub("", marked(_t, _q)) == _html.escape(_t), \
+                f"round-trip must equal html.escape for {_t!r} / {_q!r}"
+            assert "".join(c for c, _ in parts(_t, _q)) == _t, "chunks must reassemble losslessly"
     print("ok")
 
 
