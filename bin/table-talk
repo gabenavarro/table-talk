@@ -83,9 +83,17 @@ def mint_lock():
 
 
 def find_file_with_id(id_):
+    # str(id) is always a literal substring of the file bytes (4-hex or numeric id,
+    # no JSON escaping), so a cheap byte scan skips files that can't contain it
+    # before paying for a full fold. A coincidental substring match just folds one
+    # extra file; the id_ in fold() check keeps correctness exact.
+    needle = str(id_).encode()
     for path in sorted(DATA_DIR.glob("*.jsonl"), reverse=True):
-        if id_ in fold(path):
-            return path
+        try:
+            if needle in path.read_bytes() and id_ in fold(path):
+                return path
+        except FileNotFoundError:
+            continue
     return None
 
 
