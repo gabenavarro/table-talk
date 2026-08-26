@@ -34,9 +34,8 @@ body.body--dark{
 
 html,body{height:100%}
 body{background:var(--bg);color:var(--ink);margin:0}
-/* Typography is scoped to the new app shell, not to body: the legacy card DOM
-   below was laid out against Quasar's default metrics and squeezes if the base
-   font shrinks under it. Goes away with the legacy block. */
+/* Typography is scoped to the app shell rather than body so the Quasar bits we
+   still use (the filter field) keep their own metrics and are opted in by hand. */
 .tt-app{display:flex;flex-direction:column;height:100vh;overflow:hidden;
   font-family:var(--mono);font-size:12px;line-height:1.55}
 .tt-main{display:grid;grid-template-columns:284px 1fr;flex:1;min-height:0}
@@ -44,7 +43,22 @@ body{background:var(--bg);color:var(--ink);margin:0}
 .pc,.dw-meta,.when,.sl-clock,.pct{font-variant-numeric:tabular-nums}
 
 /* ---- drawer ---- */
-.dw{border-right:1px solid var(--rule);background:var(--surface);overflow-y:auto;min-height:0}
+.dw{border-right:1px solid var(--rule);background:var(--surface);min-height:0;
+  display:flex;flex-direction:column;overflow:hidden}
+.dw-tree{overflow-y:auto;min-height:0;flex:1}
+/* the filter bar is a sibling of the tree, not a child: render_drawer() clears
+   the tree on every poll and would take the input's focus and caret with it */
+.dw-find{display:flex;align-items:center;gap:6px;padding:1px 8px 1px 4px;
+  border-bottom:1px solid var(--rule)}
+.dw-in{flex:1;min-width:0}
+.dw-find .q-field__native,.dw-find .q-field__native::placeholder{
+  font:inherit;color:var(--ink);opacity:1}
+.dw-find .q-field__native::placeholder{color:var(--ink-3)}
+.dw-find .q-icon{font-size:15px;color:var(--ink-3)}
+.dw-count{color:var(--ink-3);font-size:10px;white-space:nowrap}
+.dw-theme{border:0;background:transparent;font:inherit;color:var(--ink-3);
+  cursor:pointer;padding:0 3px;line-height:1}
+.dw-theme:hover{color:var(--caret)}
 .dw-top{display:flex;align-items:center;gap:7px;padding:7px 10px;
   border-bottom:1px solid var(--rule);font-size:11px;color:var(--ink-3)}
 .dw-top .ttl{font-weight:700;color:var(--ink);letter-spacing:.05em;
@@ -111,11 +125,14 @@ body{background:var(--bg);color:var(--ink);margin:0}
   align-items:baseline;cursor:pointer}
 .pr .n{color:var(--ink-3);font-weight:400}
 .p-act{color:var(--act)} .p-job{color:var(--job)} .p-gls{color:var(--gls)} .p-ok{color:var(--ok)}
-.row{display:grid;grid-template-columns:42px 1fr;gap:8px;padding:5px 9px 8px;
+/* every .row selector is scoped to the window body on purpose: 'row' is also a
+   Quasar utility class, and QField's own markup carries it - an unscoped
+   .row{display:grid} rule collapses the filter input to a ~40 px stub */
+.win-b .row{display:grid;grid-template-columns:42px 1fr;gap:8px;padding:5px 9px 8px;
   align-items:start;border-left:3px solid transparent}
-.row:hover{background:var(--sel)}
-.row.changed{border-left-color:var(--act)}
-.row.changed-job{border-left-color:var(--job)}
+.win-b .row:hover{background:var(--sel)}
+.win-b .row.changed{border-left-color:var(--act)}
+.win-b .row.changed-job{border-left-color:var(--job)}
 /* the filter dims, it never hides — an open action is never removed from the wall */
 .tt-dim{opacity:.35}
 /* colour only - padding or weight changes advance width, re-wraps the
@@ -123,7 +140,7 @@ body{background:var(--bg);color:var(--ink);margin:0}
 .tt-hit{background:var(--gls);color:var(--bg);border-radius:2px}
 /* baseline flex, not block flow: the blink cursor is a sibling element, and in
    block flow it drops onto its own line under the title instead of trailing it */
-.row .ttl{color:var(--ink);line-height:1.5;display:flex;flex-wrap:wrap;
+.win-b .row .ttl{color:var(--ink);line-height:1.5;display:flex;flex-wrap:wrap;
   align-items:baseline;gap:.35em;min-width:0}
 /* why/rec are prose, hung off the action on real box-drawing guides */
 .sub{display:grid;grid-template-columns:20px 28px 1fr;gap:6px;margin-top:2px;
@@ -147,6 +164,9 @@ body{background:var(--bg);color:var(--ink);margin:0}
 .empty{padding:2px 9px 8px;color:var(--ink-3);font-size:11.5px}
 .win-f{margin-top:auto;padding:6px 9px;border-top:1px solid var(--rule);display:flex;gap:9px;
   align-items:center;font-size:11px;color:var(--ink-2)}
+/* flex, or the done and outstanding halves stack into two rows of cells - the
+   same trap .blocks fell into: every glyph the renderer emits is a div */
+.cells{display:flex}
 .cells .on{color:var(--ok)} .cells .off{color:var(--ink-3);opacity:.5}
 .cursor{color:var(--caret);animation:blink 1.1s steps(2,start) infinite}
 @keyframes blink{to{visibility:hidden}}
@@ -173,46 +193,6 @@ body{background:var(--bg);color:var(--ink);margin:0}
 .spin{display:inline-block;width:9px;color:var(--ok)}
 
 .tt-none{margin:auto;text-align:center;color:var(--ink-3);padding:48px}
-
-/* ---- LEGACY ----------------------------------------------------------------
-   Styles for the card/table DOM that main() still builds. Retargeted onto the
-   new tokens so the app stays usable at every commit on this branch; Tasks 8-11
-   delete this block as the DOM it styles disappears. */
-.nicegui-content{max-width:1100px;margin:0 auto}
-.tt-header{background:color-mix(in srgb,var(--surface-2) 90%,transparent);color:var(--ink);
-  -webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px);
-  border-bottom:1px solid var(--rule)}
-.tt-title{font-family:var(--mono);letter-spacing:.05em;color:var(--gls)}
-/* nowrap: NiceGUI 3.16 renders ui.row() as CSS grid, so an unconstrained label
-   lands in a narrow auto track and wraps character by character. */
-.tt-session{font-family:var(--mono);color:var(--job);white-space:nowrap;min-width:max-content}
-.tt-sec{font-size:.72rem;font-weight:700;letter-spacing:.09em;text-transform:uppercase;
-  color:var(--ink-3)}
-.nicegui-content .q-card{background:var(--surface);color:var(--ink);
-  border:1px solid var(--rule);border-radius:4px;box-shadow:none}
-.q-table{background:transparent;color:var(--ink)}
-.q-table__card{background:transparent;box-shadow:none;color:var(--ink)}
-.q-table th{color:var(--ink-3);font-weight:600;border-color:var(--rule)}
-.q-table td{border-color:var(--rule)}
-.q-table tbody tr:hover{background:var(--sel)}
-.q-table__bottom{color:var(--ink-3)}
-.q-expansion-item .q-item{color:var(--ink-3)}
-.tt td,.tt th{font-variant-numeric:tabular-nums}
-.tt td{white-space:normal;overflow-wrap:anywhere;vertical-align:top}
-.tt td:first-child,.tt th:first-child{font-family:var(--mono)}
-.tt td:first-child{white-space:nowrap}
-.tt-age{color:var(--ink-3)}
-.tt-clear{color:var(--ok);font-size:.85rem}
-.tt-toast{position:fixed;top:64px;right:16px;z-index:9999;background:var(--surface-2);
-  color:var(--act);border:1px solid var(--act);border-radius:4px;padding:.5rem .9rem;
-  font-weight:600;opacity:0;transform:translateY(-6px);transition:all .3s ease}
-.tt-toast-in{opacity:1;transform:none}
-.tt-search .q-field__native{color:var(--ink)}
-.tt-search .q-field__native::placeholder{color:var(--ink-3);opacity:.7}
-.tt-rollup{color:var(--ink-3)}
-.tt-rollup-hot{color:var(--act);font-weight:600}
-.tt-pulse{color:var(--ok);transition:opacity .9s ease}
-/* ---- end legacy ---------------------------------------------------------- */
 
 @media (prefers-reduced-motion: reduce){
   *,*::before,*::after{animation-duration:.001ms !important;

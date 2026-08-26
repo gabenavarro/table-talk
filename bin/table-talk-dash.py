@@ -21,68 +21,6 @@ def load_css():
     return CSS_PATH.read_text()
 
 
-# Mirrors the header rollup into the tab title: "(N) table-talk" while actions are open.
-# Client-side observer, so every tab stays correct with zero extra server traffic.
-TAB_TITLE_JS = """<script>
-document.addEventListener('DOMContentLoaded', () => {
-  const sync = () => {
-    const el = document.getElementById('tt-rollup');
-    if (!el) return;
-    const m = el.textContent.match(/^(\\d+) action/);
-    document.title = (m ? `(${m[1]}) ` : '') + 'table-talk';
-  };
-  const wait = setInterval(() => {
-    const el = document.getElementById('tt-rollup');
-    if (el) {
-      clearInterval(wait);
-      new MutationObserver(sync).observe(el, {childList: true, characterData: true, subtree: true});
-      sync();
-    }
-  }, 500);
-});
-</script>"""
-
-# Toast when the open-action count rises: baseline is read before observing,
-# so page loads and reconnects never fire a stale burst.
-TOAST_JS = """<script>
-document.addEventListener('DOMContentLoaded', () => {
-  const show = (msg) => {
-    const t = document.createElement('div');
-    t.className = 'tt-toast';
-    t.textContent = msg;
-    document.body.appendChild(t);
-    requestAnimationFrame(() => t.classList.add('tt-toast-in'));
-    setTimeout(() => { t.classList.remove('tt-toast-in'); setTimeout(() => t.remove(), 400); }, 5000);
-  };
-  const wait = setInterval(() => {
-    const el = document.getElementById('tt-rollup');
-    if (!el) return;
-    clearInterval(wait);
-    const read = () => { const m = el.textContent.match(/^(\\d+)/); return m ? +m[1] : 0; };
-    let prev = read();
-    new MutationObserver(() => {
-      const n = read();
-      if (n > prev) {
-        const d = n - prev, s = d > 1 ? 's' : '';
-        show(`${d} new action item${s} need${s ? '' : 's'} you`);
-      }
-      prev = n;
-    }).observe(el, {childList: true, characterData: true, subtree: true});
-  }, 500);
-});
-</script>"""
-
-# '/' focuses the filter box unless the user is already typing somewhere.
-HOTKEY_JS = """<script>
-document.addEventListener('keydown', e => {
-  if (e.key === '/' && !['INPUT', 'TEXTAREA'].includes(document.activeElement.tagName)) {
-    e.preventDefault();
-    const el = document.querySelector('.tt-search input');
-    if (el) el.focus();
-  }
-});
-</script>"""
-
 # Ids hand you the command: one delegated listener, no server round-trip.
 COPY_JS = """<script>
 document.addEventListener('click', e => {
@@ -96,10 +34,21 @@ document.addEventListener('click', e => {
 </script>"""
 
 THEME_MODES = ("system", "light", "dark")
-THEME_ICONS = {"system": "brightness_auto", "light": "light_mode", "dark": "dark_mode"}
+# Glyphs, not Quasar icon names: the shell is a terminal costume and the only
+# button styling left in the sheet is the statusline's.
+THEME_ICONS = {"system": "◐", "light": "☀", "dark": "☾"}
 
 MAX_CELLS = 20     # a long session must not wreck the footer line
 BAR_CELLS = 14
+
+# The width default_cols() assumes until someone picks a column count. The real
+# viewport cannot be read from the server: the only hook that fires per client,
+# app.on_connect, runs in a context where this page's elements are unreachable
+# (verified against NiceGUI 3.16 - client.elements reads empty there and move()
+# raises "the parent slot has been deleted"), and main()'s closure runs twice per
+# process with only the second one live, so the connect handler cannot even reach
+# the live tick. cols 1|2|3 in the statusline is the deliberate override.
+WALL_WIDTH = 1400
 
 
 def blocks(pct, cells=BAR_CELLS):
@@ -319,28 +268,16 @@ def render_window_body(container, state, newest_action_id, query="", changed=())
         done_box.move(container, -1)
 
 
-# ---- LEGACY -----------------------------------------------------------------
-# Feeds the card/table DOM main() still builds. Task 9 replaces that DOM with the
-# wall and deletes this block; it is kept only so the app runs at every commit.
-_COLS = {"action": ["id", "background", "why", "rec"], "task": ["id", "what", "progress"],
-         "term": ["term", "intuitive", "technical"], "done": ["id", "type", "summary"]}
-# Header labels that differ from a bare capitalize — match the reply tables in SKILL.md.
-_COL_LABELS = {"why": "Why it matters", "rec": "Recommendation"}
+def default_cols(width):
+    """Column count before the user picks one. Three on a wide second monitor."""
+    return 3 if width >= 1800 else (2 if width >= 1200 else 1)
 
 
-def _columns(typ):
-    return [{"name": c, "label": _COL_LABELS.get(c, c.capitalize()), "field": c,
-             "align": "left", "sortable": True} for c in _COLS[typ]]
-
-
-def _card_data(state):
-    """Everything one card renders; pure and comparable, so ticks can no-op on unchanged data."""
-    return {"action": open_rows(state, "action"), "task": open_rows(state, "task"),
-            "term": term_rows(state),
-            "done": [{"id": e["id"], "type": e["type"],
-                      "summary": e.get("background") or e.get("what", "")}
-                     for e in done_rows(state)]}
-# ---- end legacy -------------------------------------------------------------
+def layout_key(visible, cols, marks, folds, zoomed, scope, sort, drawer_open):
+    """Everything that changes WHERE a window sits. The wall re-packs when this
+    changes and at no other time - never on a poll that only changed text."""
+    return (tuple(visible), cols, tuple(sorted(marks)), tuple(sorted(folds)),
+            zoomed, scope, sort, drawer_open)
 
 
 def selftest():
@@ -372,18 +309,8 @@ def selftest():
     assert "ui-monospace" in css and "system-ui" in css, "both faces need a real fallback stack"
     assert "--ctp-" not in css, "the Catppuccin palette is gone"
     assert set(THEME_ICONS) == set(THEME_MODES)
-    assert "tt-rollup" in TAB_TITLE_JS and "document.title" in TAB_TITLE_JS
-    assert section_label("action", 3) == "🔴 Actions needed · 3"
-    assert set(SECTION_TEXT) == {"action", "task", "term"}
-    assert accent({"action": [1], "task": []}) == "act"
-    assert accent({"action": [], "task": [1]}) == "job"
-    assert accent({"action": [], "task": []}) == "ok"
     assert ago(0, now=30) == "just now" and ago(0, now=90) == "1m ago"
     assert ago(0, now=7200) == "2h ago" and ago(0, now=200000) == "2d ago"
-    assert latest_ts({"a": {"ts": 5}, "b": {"ts": 9}, "c": {}}) == 9 and latest_ts({}) == 0
-    assert "tt-search" in HOTKEY_JS and "preventDefault" in HOTKEY_JS
-    assert "tt-toast" in TOAST_JS and "tt-toast" in css, "toast script and styles must pair"
-    assert set(EMPTY_STATES) == {"action", "task", "term"}, "every section needs an empty state"
     assert blocks(0, 10) == ("", "░░░░░░░░░░")
     assert blocks(100, 10) == ("██████████", "")
     assert blocks(50, 10) == ("█████", "█████".replace("█", "░"))
@@ -398,31 +325,20 @@ def selftest():
     assert len(on) + len(off) == 20, "cells cap at 20 so a long session cannot wreck the footer"
     assert "data-id" in COPY_JS and "clipboard" in COPY_JS
     assert ".tt-dim" in css and ".tt-hit" in css, "dim and highlight need styles to mean anything"
+    assert ".dw-find" in css and ".tt-none" in css, "the filter bar and empty wall need styles"
+    assert default_cols(2000) == 3 and default_cols(1400) == 2 and default_cols(800) == 1
+    a = layout_key(["x", "y"], 2, {"x"}, set(), None, None, "recent", True)
+    b = layout_key(["x", "y"], 2, {"x"}, set(), None, None, "recent", True)
+    assert a == b, "identical state must produce an identical key, so no needless re-pack"
+    assert a != layout_key(["x", "y"], 3, {"x"}, set(), None, None, "recent", True), "cols"
+    assert a != layout_key(["x", "y"], 2, set(), set(), None, None, "recent", True), "marks"
+    assert a != layout_key(["y", "x"], 2, {"x"}, set(), None, None, "recent", True), "order"
+    assert a != layout_key(["x", "y"], 2, {"x"}, {"y"}, None, None, "recent", True), "folds"
+    assert a != layout_key(["x", "y"], 2, {"x"}, set(), "x", None, "recent", True), "zoom"
+    assert a != layout_key(["x", "y"], 2, {"x"}, set(), None, "phe", "recent", True), "scope"
+    assert a != layout_key(["x", "y"], 2, {"x"}, set(), None, None, "actions", True), "sort"
+    assert a != layout_key(["x", "y"], 2, {"x"}, set(), None, None, "recent", False), "drawer"
     print("ok")
-
-
-# LEGACY, with _COLS/_card_data above: the card sections main() still builds.
-_SECTIONS = (("🔴 Actions needed", "action", "id"),
-             ("🔵 Background work", "task", "id"),
-             ("📖 Glossary (cumulative)", "term", "term"))
-SECTION_TEXT = {key: label for label, key, _ in _SECTIONS}
-# (icon, message) shown in place of an empty table — calm, not "No data available".
-EMPTY_STATES = {"action": ("check_circle", "no open actions"),
-                "task": ("done_all", "no background work"),
-                "term": ("menu_book", "no terms yet")}
-
-
-def section_label(key, count):
-    return f"{SECTION_TEXT[key]} · {count}"
-
-
-def accent(data):
-    """Card state colour as a token name: needs the user > working > settled."""
-    return "act" if data["action"] else ("job" if data["task"] else "ok")
-
-
-def latest_ts(state):
-    return max((e.get("ts", 0) for e in state.values()), default=0)
 
 
 def ago(ts, now=None):
@@ -444,12 +360,20 @@ def main(port):
     from nicegui import app, ui
 
     ui.add_head_html(f"<style>{load_css()}</style>")
-    ui.add_head_html(TAB_TITLE_JS)
-    ui.add_head_html(HOTKEY_JS)
-    ui.add_head_html(TOAST_JS)
     ui.add_head_html(COPY_JS)
+    # the app shell owns the viewport; NiceGUI's page wrapper must not pad it
+    ui.query(".nicegui-content").style("padding:0;gap:0;max-width:none")
+
+    def store(key, default):
+        """Persisted UI state. Loopback, one user, so server-wide storage is
+        correct here and keeps two tabs in agreement. No storage_secret needed."""
+        return app.storage.general.get(f"tt.{key}", default)
+
+    def put(key, value):
+        app.storage.general[f"tt.{key}"] = value
+
     dark = ui.dark_mode()
-    mode = app.storage.general.get("theme", "system")
+    mode = store("theme", "system")
     if mode not in THEME_MODES:  # a hand-edited/stale storage value must not crash startup
         mode = "system"
 
@@ -458,118 +382,199 @@ def main(port):
 
     apply_theme(mode)
 
-    with ui.header().classes("tt-header items-center"):
-        ui.label("table-talk").classes("text-lg font-bold tt-title")
-        ui.space()
-        search = ui.input(placeholder="filter — press /").props(
-            "clearable dense borderless debounce=100").classes("w-56 tt-search")
-        pulse = ui.icon("circle", size="10px").classes("tt-pulse").style("opacity:0.35")
-        rollup = ui.label("").props("id=tt-rollup aria-live=polite").classes("text-sm tt-rollup")
+    # Layout state. marks/folds/zoomed/scope are read once and then owned by the
+    # handlers in Task 12; cols/sort/drawer_open are read per tick because a
+    # handler only has to write them for the next tick to pick them up.
+    marks = set(store("marks", []))
+    folds = set(store("folds", []))
+    zoomed = store("zoomed", None)
+    scope = store("scope", None)
 
-        def cycle():
-            nonlocal mode
-            mode = THEME_MODES[(THEME_MODES.index(mode) + 1) % len(THEME_MODES)]
-            app.storage.general["theme"] = mode
-            apply_theme(mode)
-            btn.props(f'icon={THEME_ICONS[mode]}')
+    with ui.element("div").classes("tt-app"):
+        shell = ui.element("div").classes("tt-main")
+        with shell:
+            with ui.element("div").classes("dw"):
+                # The filter bar sits above the session tree, outside the container
+                # render_drawer() clears, and carries the N/M readout: under dim,
+                # "nothing matched" and "your match is 600 px below" look identical.
+                with ui.element("div").classes("dw-find"):
+                    search = ui.input(placeholder="filter").props(
+                        "clearable dense borderless debounce=100").classes("dw-in")
+                    hits = ui.label("").classes("dw-count")
+                    theme_btn = ui.element("button").classes("dw-theme")
+                    with theme_btn:
+                        theme_lbl = ui.label(THEME_ICONS[mode])
+                drawer = ui.element("div").classes("dw-tree")   # Task 10 renders here
+            wall = ui.element("div").classes("wall")
+    # Windows live here whenever they are off the wall. Parking them rather than
+    # deleting them is what lets scope and zoom be reversible for free, and it is
+    # what makes wall.clear() safe: clearing a column deletes what is inside it.
+    attic = ui.element("div").style("display:none")
 
-        btn = ui.button(on_click=cycle).props(f'flat round icon={THEME_ICONS[mode]}')
-        with btn:
-            ui.tooltip("theme: system → light → dark")
+    def cycle_theme():
+        nonlocal mode
+        mode = THEME_MODES[(THEME_MODES.index(mode) + 1) % len(THEME_MODES)]
+        put("theme", mode)
+        apply_theme(mode)
+        theme_lbl.set_text(THEME_ICONS[mode])
 
-    cards = {}    # path -> {"tables": {key: ui.table}, "expansion": ui.expansion, "data": _card_data}
-    built = None  # file list the DOM was last built for; None = never built
+    theme_btn.on("click", lambda _: cycle_theme())
 
-    def build_card(path, data, latest):
-        with ui.card().classes("w-full").style(
-                f"border-left:4px solid var(--{accent(data)})") as card_el:
-            with ui.row().classes("items-baseline gap-2 w-full"):
-                ui.label(path.stem).classes("text-base font-bold tt-session")
-                meta = ui.label(ago(latest) if latest else "").classes("text-xs tt-age")
-                with meta:
-                    tip = ui.tooltip(stamp(latest) if latest else "")
-            tables = {}
-            labels = {}
-            empties = {}
-            for _, key, row_key in _SECTIONS:
-                labels[key] = ui.label(section_label(key, len(data[key]))).classes("tt-sec")
-                tables[key] = ui.table(columns=_columns(key), rows=data[key],
-                                       row_key=row_key).props("dense flat").classes("w-full tt")
-                search.bind_value_to(tables[key], "filter")
-                with ui.row().classes("items-center gap-1 tt-clear") as empty:
-                    ui.icon(EMPTY_STATES[key][0], size="18px")
-                    ui.label(EMPTY_STATES[key][1])
-                empties[key] = empty
-                tables[key].set_visibility(bool(data[key]))
-                empty.set_visibility(not data[key])
-            exp = ui.expansion(f"{len(data['done'])} done").classes("w-full opacity-50")
-            with exp:
-                tables["done"] = ui.table(columns=_columns("done"), rows=data["done"],
-                                          row_key="id").props("dense flat").classes("w-full tt")
-                search.bind_value_to(tables["done"], "filter")
-            exp.set_visibility(bool(data["done"]))
-            # a filter match hidden in the collapsed done panel is invisible — open it while filtering
-            search.bind_value_to(exp, "value", forward=bool)
-        return {"el": card_el, "tables": tables, "labels": labels, "expansion": exp,
-                "empties": empties, "data": data, "meta": meta, "tip": tip,
-                "latest_ts": latest, "age_txt": None}
+    windows = {}     # session stem -> window parts, built once and moved, never rebuilt
+    columns = []     # the current column containers
+    layout = None    # last layout_key; the wall re-packs only when this changes
 
-    container = ui.column().classes("w-full")
+    def on_window_action(key, action):   # replaced in Task 12
+        pass
 
-    flip = False
+    def build_window(key, project, index, state):
+        el = ui.element("div").classes("win").props(f'data-window="{key}"')
+        with el:
+            with ui.element("div").classes("win-t"):
+                ui.label(project).classes("nm")
+                ui.label(f":{index}").classes("ix")
+                bell = ui.label("!").classes("bell")
+                actv = ui.label("#").classes("actv")
+                mark = ui.label("M").classes("fl-m")
+                zoom = ui.label("Z").classes("fl-z")
+                when = ui.label("").classes("when")
+                with ui.element("div").classes("wctl"):
+                    for act, glyph, tip in (("mark", "M", "Mark (m) — hold at the front"),
+                                            ("zoom", "Z", "Zoom (z) — fill the wall"),
+                                            ("fold", "▾", "Fold (f) — collapse to the titlebar")):
+                        btn = ui.element("button").classes("wb").props(f'title="{tip}"')
+                        with btn:
+                            ui.label(glyph)
+                        btn.on("click", lambda _, k=key, a=act: on_window_action(k, a))
+            body = ui.element("div").classes("win-b")
+            with ui.element("div").classes("win-f"):
+                cells = ui.element("div").classes("cells")
+                tally = ui.label("")
+        return {"el": el, "body": body, "bell": bell, "actv": actv, "mark": mark,
+                "zoom": zoom, "when": when, "cells": cells, "tally": tally,
+                "hot": False, "latest": 0, "sig": None}
+
+    def dress(key, win):
+        """Every class on a window: `hot` comes from its data, marked/folded/zoomed
+        from the layout. One place, or the two callers clobber each other's
+        classes(replace=...)."""
+        cls = "win"
+        if win["hot"]:
+            cls += " win-hot"
+        if key in marks:
+            cls += " marked"
+        if key in folds:
+            cls += " folded"
+        win["el"].classes(replace=cls)
+        win["mark"].set_visibility(key in marks)
+        win["zoom"].set_visibility(key == zoomed)
+
+    def paint_window(win, key, state, newest, query="", changed=()):
+        """Update everything about one window that depends on its data.
+        Called only when that window's data actually changed."""
+        summary = M.summarize(state)
+        win["bell"].set_visibility(summary["open_actions"] > 0)
+        win["actv"].set_visibility(summary["open_tasks"] > 0)
+        win["hot"] = summary["open_actions"] > 0
+        dress(key, win)
+        on, off = resolved_cells(summary["resolved"], summary["recorded"])
+        win["cells"].clear()
+        with win["cells"]:
+            ui.label(on).classes("on")
+            ui.label(off).classes("off")
+        win["tally"].set_text(
+            f'{summary["resolved"]}/{summary["recorded"]} resolved'
+            + (" · all clear" if summary["open_actions"] == 0 and summary["open_tasks"] == 0 else ""))
+        win["latest"] = summary["latest"]
+        win["when"].props(f'title="{stamp(summary["latest"])}"' if summary["latest"] else "")
+        render_window_body(win["body"], state, newest, query, changed)
+
+    def repack(visible, cols, weights):
+        """Move existing windows into freshly sized columns. move() preserves
+        element identity, so nothing is rebuilt and nothing flickers."""
+        for win in windows.values():
+            win["el"].move(attic, -1)      # park first: clearing a column deletes its children
+        wall.clear()
+        columns.clear()
+        buckets = M.pack(visible, cols, weights, marks) if visible else []
+        with wall:
+            if not visible:
+                ui.label("no sessions yet — record something with table-talk").classes("tt-none")
+            for _ in buckets:
+                columns.append(ui.element("div").classes("col"))
+        for bucket, container in zip(buckets, columns):
+            for key in bucket:
+                windows[key]["el"].move(container, -1)
+                dress(key, windows[key])
 
     def tick():
-        nonlocal built, flip
-        files = sorted(DATA_DIR.glob("*.jsonl"), reverse=True)
-        if files != built:  # session file appeared/disappeared: rebuild structure (only case that resets scroll)
-            container.clear()
-            cards.clear()
-            with container:
-                if not files:
-                    with ui.column().classes("items-center w-full m-8 opacity-60"):
-                        ui.icon("inbox", size="3rem")
-                        ui.label("no sessions yet").classes("text-lg")
-                        ui.label("record something: table-talk action \"…\" --why \"…\" --rec \"…\"") \
-                            .classes("text-sm tt-session")
-                for p in files:
-                    state = fold_cached(p)
-                    cards[p] = build_card(p, _card_data(state), latest_ts(state))
-            built = files
-        else:
-            for p, card in cards.items():  # data-only change: mutate rows in place so scroll and sort survive
-                state = fold_cached(p)
-                data = _card_data(state)
-                if data == card["data"]:
+        nonlocal layout
+        states = {p.stem: fold_cached(p) for p in sorted(DATA_DIR.glob("*.jsonl"), reverse=True)}
+        groups = M.group_sessions(list(states.items()))
+        where = {s["key"]: (g["project"], s["index"]) for g in groups for s in g["sessions"]}
+        sort = store("sort", "recent")
+        # the wall has no sort of its own: it reads in the drawer's order
+        order = [s["key"] for g in M.sort_groups(groups, sort) for s in g["sessions"]]
+
+        for key in list(windows):              # a session file went away
+            if key not in states:
+                windows.pop(key)["el"].delete()
+        for key in order:
+            if key not in windows:
+                with attic:
+                    windows[key] = build_window(key, *where[key], states[key])
+
+        # Scope and zoom choose what is on the wall. The query never does: the
+        # filter dims, it never hides, so an open action cannot leave the wall.
+        visible = [k for k in order if scope in (None, where[k][0])]
+        if zoomed in windows:
+            visible = [zoomed]
+        drawer_open = store("drawer_open", True)
+        cols = 1 if zoomed in windows else store("cols", 0) or default_cols(WALL_WIDTH)
+        key = layout_key(visible, cols, marks, folds, zoomed, scope, sort, drawer_open)
+        if key != layout:
+            layout = key
+            shell.classes(replace="tt-main" if drawer_open else "tt-main tt-collapsed")
+            repack(visible, cols, {k: M.weight(v) for k, v in states.items()})
+
+        query = (search.value or "").strip()
+        # exactly one cursor on the page: the newest open action anywhere on the wall
+        newest, newest_ts = None, -1
+        rows = matched = 0
+        for k in visible:
+            for ev in states[k].values():
+                typ = ev.get("type")
+                if typ not in ("action", "task", "term"):
                     continue
-                for key, table in card["tables"].items():
-                    if data[key] != card["data"][key]:
-                        table.rows[:] = data[key]
-                        table.update()
-                        if key in card["labels"]:
-                            card["labels"][key].set_text(section_label(key, len(data[key])))
-                card["expansion"].set_text(f"{len(data['done'])} done")
-                card["expansion"].set_visibility(bool(data["done"]))
-                card["el"].style(f"border-left:4px solid var(--{accent(data)})")
-                for key, empty in card["empties"].items():
-                    card["tables"][key].set_visibility(bool(data[key]))
-                    empty.set_visibility(not data[key])
-                if (lt := latest_ts(state)) != card["latest_ts"]:
-                    card["latest_ts"] = lt
-                    card["tip"].set_text(stamp(lt))
-                card["data"] = data
-        for card in cards.values():  # age advances even when data does not; re-render only on text change
-            txt = ago(card["latest_ts"]) if card["latest_ts"] else ""
-            if card["age_txt"] != txt:
-                card["age_txt"] = txt
-                card["meta"].set_text(txt)
-        n = sum(len(c["data"]["action"]) for c in cards.values())
-        txt = (f"{n} action{'s' if n != 1 else ''} needed across "
-               f"{len(cards)} session{'s' if len(cards) != 1 else ''}") if n else "all clear"
-        if rollup.text != txt:
-            rollup.set_text(txt)
-            rollup.classes(replace="text-sm tt-rollup" + (" tt-rollup-hot" if n else ""))
-        flip = not flip  # heartbeat: proves the poll is alive without re-rendering anything
-        pulse.style(f"opacity:{0.9 if flip else 0.35}")
+                rows += 1
+                matched += not _dim(ev, query)
+                if typ == "action" and ev.get("status") != "done" and ev.get("ts", 0) > newest_ts:
+                    newest, newest_ts = str(ev["id"]), ev.get("ts", 0)
+        txt = f"{matched}/{rows} rows match" if query else ""
+        if hits.text != txt:
+            hits.set_text(txt)
+
+        for k in visible:
+            win = windows[k]
+            sig = (query, newest, states[k])
+            if win["sig"] != sig:
+                win["sig"] = sig
+                paint_window(win, k, states[k], newest, query)
+            age = ago(win["latest"]) if win["latest"] else ""   # advances with no new data
+            if win["when"].text != age:
+                win["when"].set_text(age)
+
+    def on_query():
+        """Dim alone leaves the match off-screen on half of realistic queries with
+        no hint which way to scroll; clearing is how you return to glance mode.
+        rAF because the rows carrying .tt-hit are still being patched in."""
+        tick()
+        target = ("document.querySelector('.tt-hit')?.scrollIntoView({block:'center'})"
+                  if (search.value or "").strip() else
+                  "document.querySelector('.wall')?.scrollTo({top:0})")
+        ui.run_javascript(f"requestAnimationFrame(() => {target})")
+
+    search.on_value_change(lambda _: on_query())
 
     tick()
     # fold_cached re-parses only changed files; steady-state tick is O(files stat)
