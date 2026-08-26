@@ -13,63 +13,14 @@ from pathlib import Path
 
 DATA_DIR = Path(os.environ.get("TABLE_TALK_DIR") or str(Path.home() / ".local/share/table-talk"))
 
-# Catppuccin palettes (anuppuccin): Latte on light, Mocha on dark.
-# Quasar's dark plugin toggles body--dark, so the variables swap with the theme.
-THEME_CSS = """<style>
-:root{
-  --ctp-base:#eff1f5; --ctp-mantle:#e6e9ef; --ctp-crust:#dce0e8;
-  --ctp-surface0:#ccd0da; --ctp-surface1:#bcc0cc;
-  --ctp-text:#4c4f69; --ctp-subtext:#6c6f85;
-  --ctp-red:#d20f39; --ctp-blue:#1e66f5; --ctp-green:#40a02b;
-  --ctp-mauve:#8839ef; --ctp-lavender:#7287fd; --ctp-peach:#fe640b;
-  --q-primary:#8839ef;
-}
-body.body--dark{
-  --ctp-base:#1e1e2e; --ctp-mantle:#181825; --ctp-crust:#11111b;
-  --ctp-surface0:#313244; --ctp-surface1:#45475a;
-  --ctp-text:#cdd6f4; --ctp-subtext:#a6adc8;
-  --ctp-red:#f38ba8; --ctp-blue:#89b4fa; --ctp-green:#a6e3a1;
-  --ctp-mauve:#cba6f7; --ctp-lavender:#b4befe; --ctp-peach:#fab387;
-  --q-primary:#cba6f7;
-}
-body{ background:var(--ctp-base); color:var(--ctp-text); }
-.tt-header{ background:color-mix(in srgb, var(--ctp-mantle) 90%, transparent);
-  color:var(--ctp-text); backdrop-filter:blur(8px);
-  border-bottom:1px solid var(--ctp-surface0); }
-.tt-title{ font-family:ui-monospace,'JetBrains Mono','Fira Code',monospace;
-  letter-spacing:.05em; color:var(--ctp-mauve); }
-.tt-session{ font-family:ui-monospace,'JetBrains Mono','Fira Code',monospace;
-  color:var(--ctp-lavender); }
-.tt-sec{ font-size:.72rem; font-weight:700; letter-spacing:.09em;
-  text-transform:uppercase; color:var(--ctp-subtext); }
-.nicegui-content .q-card{ background:var(--ctp-mantle); color:var(--ctp-text);
-  border:1px solid var(--ctp-surface0); border-radius:14px;
-  box-shadow:0 1px 3px color-mix(in srgb, var(--ctp-crust) 60%, transparent); }
-.q-table{ background:transparent; color:var(--ctp-text); }
-.q-table__card{ background:transparent; box-shadow:none; color:var(--ctp-text); }
-.q-table th{ color:var(--ctp-subtext); font-weight:600; border-color:var(--ctp-surface0); }
-.q-table td{ border-color:var(--ctp-surface0); }
-.q-table tbody tr:hover{ background:color-mix(in srgb, var(--ctp-surface0) 45%, transparent); }
-.q-table__bottom{ color:var(--ctp-subtext); }
-.q-expansion-item .q-item{ color:var(--ctp-subtext); }
-.nicegui-content{ max-width:1100px; margin:0 auto; }
-.tt td,.tt th{ font-variant-numeric:tabular-nums; }
-.tt td{ white-space:normal; overflow-wrap:anywhere; vertical-align:top; }
-.tt td:first-child,.tt th:first-child{ font-family:ui-monospace,'JetBrains Mono','Fira Code',monospace; }
-.tt td:first-child{ white-space:nowrap; }
-.tt-age{ color:var(--ctp-subtext); }
-.tt-clear{ color:var(--ctp-green); font-size:.85rem; }
-.tt-toast{ position:fixed; top:64px; right:16px; z-index:9999; background:var(--ctp-mantle);
-  color:var(--ctp-red); border:1px solid var(--ctp-red); border-radius:10px;
-  padding:.5rem .9rem; font-weight:600; opacity:0; transform:translateY(-6px);
-  transition:all .3s ease; box-shadow:0 4px 14px color-mix(in srgb, var(--ctp-crust) 60%, transparent); }
-.tt-toast-in{ opacity:1; transform:none; }
-.tt-search .q-field__native{ color:var(--ctp-text); }
-.tt-search .q-field__native::placeholder{ color:var(--ctp-subtext); opacity:.7; }
-.tt-rollup{ color:var(--ctp-subtext); }
-.tt-rollup-hot{ color:var(--ctp-red); font-weight:600; }
-.tt-pulse{ color:var(--ctp-green); transition:opacity .9s ease; }
-</style>"""
+CSS_PATH = Path(__file__).resolve().parent / "tt.css"
+
+
+def load_css():
+    """The stylesheet lives beside the script so it can be edited as CSS.
+    Read at startup; a missing file is a broken install, not a runtime path."""
+    return CSS_PATH.read_text()
+
 
 # Mirrors the header rollup into the tab title: "(N) table-talk" while actions are open.
 # Client-side observer, so every tab stays correct with zero extra server traffic.
@@ -247,22 +198,29 @@ def selftest():
             fh.write('{"id":"z9z9","type":"term","term":"Z","intuitive":"i","technical":"t","ts":9}\n')
         assert "z9z9" in fold_cached(p) and "z9z9" not in before, "cache invalidates on file change"
         assert fold_cached(Path(td) / "missing.jsonl") == {}, "cached fold tolerates missing file"
-    assert "--ctp-base:#eff1f5" in THEME_CSS and "--ctp-base:#1e1e2e" in THEME_CSS, \
-        "both Latte and Mocha palettes must be defined"
-    assert "body.body--dark" in THEME_CSS, "dark palette must key off Quasar's body--dark"
+    css = load_css()
+    # both palettes, keyed the way the design spec pins them
+    assert "--bg:#1d2021" in css and "--surface:#282828" in css, "gruvbox-dark ground and surface"
+    assert "--bg:#e8e6dc" in css and "--surface:#faf9f5" in css, "claude-code-light ground and surface"
+    assert "--caret:#8ec07c" in css and "--caret:#d97757" in css, "cursor colour per theme"
+    assert "--act:#fb4934" in css and "--act:#a53a2e" in css
+    assert "body.body--dark" in css, "dark palette must key off Quasar's body--dark"
+    assert "tabular-nums" in css, "digit columns must align"
+    assert "prefers-reduced-motion" in css, "motion must be defeatable"
+    assert "ui-monospace" in css and "system-ui" in css, "both faces need a real fallback stack"
+    assert "--ctp-" not in css, "the Catppuccin palette is gone"
     assert set(THEME_ICONS) == set(THEME_MODES)
     assert "tt-rollup" in TAB_TITLE_JS and "document.title" in TAB_TITLE_JS
     assert section_label("action", 3) == "🔴 Actions needed · 3"
     assert set(SECTION_TEXT) == {"action", "task", "term"}
-    assert accent({"action": [1], "task": []}) == "red"
-    assert accent({"action": [], "task": [1]}) == "blue"
-    assert accent({"action": [], "task": []}) == "green"
-    assert "font-variant-numeric:tabular-nums" in THEME_CSS and "max-width:1100px" in THEME_CSS
+    assert accent({"action": [1], "task": []}) == "act"
+    assert accent({"action": [], "task": [1]}) == "job"
+    assert accent({"action": [], "task": []}) == "ok"
     assert ago(0, now=30) == "just now" and ago(0, now=90) == "1m ago"
     assert ago(0, now=7200) == "2h ago" and ago(0, now=200000) == "2d ago"
     assert latest_ts({"a": {"ts": 5}, "b": {"ts": 9}, "c": {}}) == 9 and latest_ts({}) == 0
     assert "tt-search" in HOTKEY_JS and "preventDefault" in HOTKEY_JS
-    assert "tt-toast" in TOAST_JS and "tt-toast" in THEME_CSS, "toast script and styles must pair"
+    assert "tt-toast" in TOAST_JS and "tt-toast" in css, "toast script and styles must pair"
     assert set(EMPTY_STATES) == {"action", "task", "term"}, "every section needs an empty state"
     print("ok")
 
@@ -282,8 +240,8 @@ def section_label(key, count):
 
 
 def accent(data):
-    """Card state color: needs the user > working > settled."""
-    return "red" if data["action"] else ("blue" if data["task"] else "green")
+    """Card state colour as a token name: needs the user > working > settled."""
+    return "act" if data["action"] else ("job" if data["task"] else "ok")
 
 
 def latest_ts(state):
@@ -308,7 +266,7 @@ def stamp(ts):
 def main(port):
     from nicegui import app, ui
 
-    ui.add_head_html(THEME_CSS)
+    ui.add_head_html(f"<style>{load_css()}</style>")
     ui.add_head_html(TAB_TITLE_JS)
     ui.add_head_html(HOTKEY_JS)
     ui.add_head_html(TOAST_JS)
@@ -346,7 +304,7 @@ def main(port):
 
     def build_card(path, data, latest):
         with ui.card().classes("w-full").style(
-                f"border-left:4px solid var(--ctp-{accent(data)})") as card_el:
+                f"border-left:4px solid var(--{accent(data)})") as card_el:
             with ui.row().classes("items-baseline gap-2 w-full"):
                 ui.label(path.stem).classes("text-base font-bold tt-session")
                 meta = ui.label(ago(latest) if latest else "").classes("text-xs tt-age")
@@ -413,7 +371,7 @@ def main(port):
                             card["labels"][key].set_text(section_label(key, len(data[key])))
                 card["expansion"].set_text(f"{len(data['done'])} done")
                 card["expansion"].set_visibility(bool(data["done"]))
-                card["el"].style(f"border-left:4px solid var(--ctp-{accent(data)})")
+                card["el"].style(f"border-left:4px solid var(--{accent(data)})")
                 for key, empty in card["empties"].items():
                     card["tables"][key].set_visibility(bool(data[key]))
                     empty.set_visibility(not data[key])
