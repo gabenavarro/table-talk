@@ -59,6 +59,11 @@ body{ background:var(--ctp-base); color:var(--ctp-text); }
 .tt td:first-child{ white-space:nowrap; }
 .tt-age{ color:var(--ctp-subtext); }
 .tt-clear{ color:var(--ctp-green); font-size:.85rem; }
+.tt-toast{ position:fixed; top:64px; right:16px; z-index:9999; background:var(--ctp-mantle);
+  color:var(--ctp-red); border:1px solid var(--ctp-red); border-radius:10px;
+  padding:.5rem .9rem; font-weight:600; opacity:0; transform:translateY(-6px);
+  transition:all .3s ease; box-shadow:0 4px 14px color-mix(in srgb, var(--ctp-crust) 60%, transparent); }
+.tt-toast-in{ opacity:1; transform:none; }
 .tt-search .q-field__native{ color:var(--ctp-text); }
 .tt-search .q-field__native::placeholder{ color:var(--ctp-subtext); opacity:.7; }
 .tt-rollup{ color:var(--ctp-subtext); }
@@ -83,6 +88,33 @@ document.addEventListener('DOMContentLoaded', () => {
       new MutationObserver(sync).observe(el, {childList: true, characterData: true, subtree: true});
       sync();
     }
+  }, 500);
+});
+</script>"""
+
+# Toast when the open-action count rises: baseline is read before observing,
+# so page loads and reconnects never fire a stale burst.
+TOAST_JS = """<script>
+document.addEventListener('DOMContentLoaded', () => {
+  const show = (msg) => {
+    const t = document.createElement('div');
+    t.className = 'tt-toast';
+    t.textContent = msg;
+    document.body.appendChild(t);
+    requestAnimationFrame(() => t.classList.add('tt-toast-in'));
+    setTimeout(() => { t.classList.remove('tt-toast-in'); setTimeout(() => t.remove(), 400); }, 5000);
+  };
+  const wait = setInterval(() => {
+    const el = document.getElementById('tt-rollup');
+    if (!el) return;
+    clearInterval(wait);
+    const read = () => { const m = el.textContent.match(/^(\\d+)/); return m ? +m[1] : 0; };
+    let prev = read();
+    new MutationObserver(() => {
+      const n = read();
+      if (n > prev) show(`${n - prev} new action item${n - prev > 1 ? 's' : ''} need you`);
+      prev = n;
+    }).observe(el, {childList: true, characterData: true, subtree: true});
   }, 500);
 });
 </script>"""
@@ -187,6 +219,7 @@ def selftest():
     assert ago(0, now=7200) == "2h ago" and ago(0, now=200000) == "2d ago"
     assert latest_ts({"a": {"ts": 5}, "b": {"ts": 9}, "c": {}}) == 9 and latest_ts({}) == 0
     assert "tt-search" in HOTKEY_JS and "preventDefault" in HOTKEY_JS
+    assert "tt-toast" in TOAST_JS and "tt-toast" in THEME_CSS, "toast script and styles must pair"
     print("ok")
 
 
@@ -230,6 +263,7 @@ def main(port):
     ui.add_head_html(THEME_CSS)
     ui.add_head_html(TAB_TITLE_JS)
     ui.add_head_html(HOTKEY_JS)
+    ui.add_head_html(TOAST_JS)
     dark = ui.dark_mode()
     mode = app.storage.general.get("theme", "system")
 
