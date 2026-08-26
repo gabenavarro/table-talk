@@ -1,5 +1,10 @@
 # table-talk
 
+[![License: MIT](https://img.shields.io/github/license/gabenavarro/table-talk)](LICENSE)
+[![Python ≥3.12](https://img.shields.io/badge/python-%E2%89%A53.12-blue)](https://www.python.org/)
+[![PEP 723](https://img.shields.io/badge/PEP%20723-uv%20run-261230)](https://docs.astral.sh/uv/guides/scripts/)
+[![NiceGUI](https://img.shields.io/badge/NiceGUI-3.16-informational)](https://nicegui.io/)
+
 Structured collaboration between you and Claude: every Claude reply ends with
 three tables — decisions it needs from you, background work in flight, and
 technical terms explained twice (intuitive + precise). Everything is also an
