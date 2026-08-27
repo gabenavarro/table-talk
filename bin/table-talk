@@ -117,6 +117,19 @@ def add_term(path, term, intuitive, technical):
     return i
 
 
+def add_diagram(path, title, mermaid):
+    """Same title (case-insensitive) in this file -> reuse id, replace the
+    source: a diagram is iterated on, never accumulated."""
+    with mint_lock():
+        state = fold(path)
+        existing = next((i for i, e in state.items() if e.get("type") == "diagram"
+                         and e.get("title", "").lower() == title.lower()), None)
+        i = existing or new_id()
+        append(path, {"id": i, "type": "diagram", "title": title,
+                      "mermaid": mermaid, "ts": int(time.time())})
+    return i
+
+
 def update(id_, fields):
     """Append a partial update to the file that contains id_ (folding is per-file)."""
     f = find_file_with_id(id_)
@@ -198,6 +211,16 @@ def selftest():
         except SystemExit:
             pass
         assert "status" not in fold(f)[tid], "a rejected update must not touch the term"
+        d1 = add_diagram(f, "Pipeline", "flowchart LR\n  a --> b")
+        d2 = add_diagram(f, "pipeline", "flowchart LR\n  a --> c")
+        assert d1 == d2, "diagram dedupe is case-insensitive on the title"
+        assert fold(f)[d1]["mermaid"].endswith("a --> c"), \
+            "re-recording a title REPLACES the source: a diagram is iterated on"
+        try:
+            update(d1, {"status": "done"})
+            raise AssertionError("done on a diagram must be rejected")
+        except SystemExit:
+            pass
     print("ok")
 
 
@@ -229,6 +252,11 @@ def main():
     tm.add_argument("--technical", required=True)
     tm.add_argument("--project")
 
+    dg = sub.add_parser("diagram", help="record a mermaid diagram (the dashboard renders it)")
+    dg.add_argument("mermaid", help="mermaid source, e.g. $'flowchart LR\\n  a --> b'")
+    dg.add_argument("--title", required=True)
+    dg.add_argument("--project")
+
     sh = sub.add_parser("show", help="dump folded state")
     sh.add_argument("project", nargs="?")
 
@@ -249,6 +277,8 @@ def main():
         update(args.id, {"status": "done"})
     elif args.cmd == "term":
         print(add_term(session_file(args.project), args.term, args.intuitive, args.technical))
+    elif args.cmd == "diagram":
+        print(add_diagram(session_file(args.project), args.title, args.mermaid))
     elif args.cmd == "show":
         cmd_show(args.project)
     elif args.cmd == "serve":
