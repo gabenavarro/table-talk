@@ -784,6 +784,11 @@ def selftest():
         "the tree guide is one continuous RULE with a corner on the last sub-line: " \
         "drawn as a ├/└ glyph per row it broke open the moment `why` wrapped"
     assert "position:relative" in sub, "the guide is absolutely positioned against .sub"
+    gap = sub.split("margin-top:")[1].split("px")[0]
+    bridge = css.split(".sub::before{")[1].split("}")[0].split("bottom:-")[1].split("px")[0]
+    assert gap == bridge == "7", \
+        "the guide bridges the gap with a negative bottom: move the margin " \
+        "without moving the bridge and the rule breaks between sub-rows"
     assert set(THEME_ICONS) == set(THEME_MODES)
     assert THEME_ICONS == {"system": "◐", "light": "○", "dark": "●"}, \
         "one geometric family the PRIMARY face carries: ☀ and ☾ are absent " \
