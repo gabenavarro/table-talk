@@ -184,10 +184,11 @@ def weight(state):
             continue
         typ = ev.get("type")
         if typ == "action":
-            chars = len(ev.get("background", "")) + len(ev.get("why", "")) + len(ev.get("rec", ""))
+            chars = (len(ev.get("background", "")) + len(ev.get("why", ""))
+                     + len(ev.get("rec", "")) + len(ev.get("intuitive", "")))
             units += 3 + chars // 110
         elif typ == "task":
-            units += 2
+            units += 2 + (1 if ev.get("intuitive") else 0)
         elif typ == "diagram":
             units += 6      # rendered SVG: roughly an action's height, plus room
         if typ in ("action", "task") and ev.get("diagram"):
@@ -557,6 +558,13 @@ def selftest():
                          "ts": 1}}) == 1, "a done item's sketch is collapsed with it"
     assert "flow" in row_text({"id": "x", "type": "task", "diagram": "a->flow"}), \
         "the filter must see a sketch's labels"
+
+    int_action = {"a": dict(one_action["a"], intuitive="i" * 220)}
+    assert weight(int_action) > weight(one_action), \
+        "a long intuitive line is real height, like long why/rec prose"
+    int_task = {"a": {"type": "task", "status": "open", "what": "x",
+                      "intuitive": "plain", "ts": 1}}
+    assert weight(int_task) == 4, "a task's intuitive sub-row costs one unit"
 
     import tempfile as _tf
     with _tf.TemporaryDirectory() as _td:
