@@ -1147,6 +1147,10 @@ def selftest():
     assert code.index("paint_window(win, k, wall_states[k]") < code.index('win["sig"] = sig'), \
         "the paint signature is recorded AFTER the paint: assigned first, one " \
         "exception mid-build marks a half-drawn window current forever"
+    assert code.index("def on_focus") < code.index("M.parse_stem(key)[1]"), \
+        "a drawer click must resolve to the window actually on the wall: " \
+        "merged, the session stem is never on it, so the click discarded " \
+        "scope and needs-me and then scrolled to nothing"
     assert code.index('srow.on("click"') < code.index("container.tt_sig = sig"), \
         "same for the drawer: its signature is recorded after the tree is built"
     assert code.index("<style>{load_css()}</style>") < code.index('theme_css(cfg["theme"])'), \
@@ -1595,6 +1599,11 @@ def main(port=None):
         hiding this one is cleared first - a click that visibly does nothing is
         worse than a click that changes the view."""
         nonlocal zoomed, scope, needs_me
+        # While merged the wall holds PROJECTS, so a session stem is on it under
+        # its project's name: resolve it, or this clears scope and needs-me and
+        # then scrolls to a window that does not exist.
+        if store("merged", False):
+            key = M.parse_stem(key)[1]
         on_pick(key)
         if key not in on_wall:
             zoomed, scope, needs_me = None, None, False
