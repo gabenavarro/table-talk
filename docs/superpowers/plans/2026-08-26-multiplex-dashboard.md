@@ -1869,7 +1869,7 @@ The last of the seven shared foundations. A 900 ms flash on a second monitor is 
 
 **Interfaces:**
 - Consumes: `render_window_body`.
-- Produces: `changed_ids(state: dict, since: int) -> set[str]`, `VISIBILITY_JS: str`.
+- Produces: `changed_ids(state: dict, since: int) -> set[str]`, `SEEN_JS: str`.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -1883,7 +1883,7 @@ Add to `selftest()` before `print("ok")`:
     assert changed_ids(st, 0) == {"a", "b"}
     assert changed_ids(st, 999) == set()
     assert changed_ids({}, 0) == set()
-    assert "visibilitychange" in VISIBILITY_JS
+    assert "visibilitychange" in SEEN_JS
 ```
 
 - [ ] **Step 2: Run the test to verify it fails**
@@ -1903,7 +1903,7 @@ def changed_ids(state, since):
 
 # The tab going visible is what clears the gutters - not a timer. A change that
 # landed while you were in your editor is still marked when you come back.
-VISIBILITY_JS = """<script>
+SEEN_JS = """<script>
 document.addEventListener('visibilitychange', () => {
   if (!document.hidden) window.dispatchEvent(new CustomEvent('tt-seen'));
 });

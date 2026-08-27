@@ -14,7 +14,9 @@ import sys
 
 _HEX = re.compile(r"^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})\Z")
 
-# Every token the stylesheet's :root block defines. Names copied from bin/tt.css.
+# The configurable tokens, values copied from bin/tt.css and pinned equal to it by
+# selftest(). --hover is deliberately excluded: it is a consequence of --surface,
+# not an independent choice (see the note at the top of tt.css).
 _DARK = {"bg": "#1d2021", "surface": "#282828", "surface-2": "#32302f",
          "ink": "#ebdbb2", "ink-2": "#a89984", "ink-3": "#928374",
          "sel": "#665c54", "caret": "#8ec07c",
@@ -22,8 +24,8 @@ _DARK = {"bg": "#1d2021", "surface": "#282828", "surface-2": "#32302f",
          "gls": "#fabd2f", "gls-2": "#d79921", "ok": "#b8bb26", "ok-2": "#98971a",
          "mag": "#d3869b"}
 _LIGHT = {"bg": "#e8e6dc", "surface": "#faf9f5", "surface-2": "#f2f0e8",
-          "ink": "#141413", "ink-2": "#6f6e68", "ink-3": "#93918a",
-          "sel": "#e8e6dc", "caret": "#d97757",
+          "ink": "#141413", "ink-2": "#6f6e68", "ink-3": "#727169",
+          "sel": "#e8e6dc", "caret": "#c4512c",
           "act": "#a53a2e", "act-2": "#d97757", "job": "#3668a0", "job-2": "#6a9bcc",
           "gls": "#8a6a10", "gls-2": "#b88a28", "ok": "#4a7038", "ok-2": "#788c5d",
           "mag": "#7a4a82"}
@@ -85,6 +87,14 @@ def load(path=None):
 
 def selftest():
     import tempfile
+    # The defaults are a SECOND copy of the stylesheet's values; if they drift, a
+    # user with no config file silently gets the old colour back.
+    css = Path(__file__).with_name("tt.css").read_text()
+    for block, tokens in ((":root{", _LIGHT), ("body.body--dark{", _DARK)):
+        decls = css.split(block, 1)[1].split("}", 1)[0]
+        for name, value in tokens.items():
+            assert f"--{name}:{value};" in decls, \
+                f"tt.css {block[:-1]} --{name} does not match tt_config's {value}"
     assert valid_colour("#fb4934") and valid_colour("#FFF") and valid_colour("#1d2021ff")
     assert not valid_colour("red"), "only hex is accepted"
     assert not valid_colour("#12"), "too short"

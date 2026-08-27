@@ -5,8 +5,11 @@
    - the page ground sits one step under the panel surface (#1d2021 is canonical
      gruvbox hard, #e8e6dc is the light theme's own selection colour), so panels
      separate without a single drop shadow;
-   - terracotta #d97757 is claude-code-light's declared CURSOR colour, so it
-     appears only where a cursor, focus ring or mark would - never as a wash.
+   - terracotta is claude-code-light's declared CURSOR colour (#d97757),
+     darkened to #c4512c at the same hue and saturation because it is also the
+     colour of `.id:hover` - text directly under the pointer, on the white hover
+     ground, where #d97757 read 3.12:1 and #c4512c reads 4.60:1. It appears only
+     where a cursor, focus ring or mark would - never as a wash.
 
    --sel is SELECTION (a state you chose); --hover is a pointer passing through,
    and the two move in opposite directions per theme. Hover must always widen the
@@ -19,9 +22,9 @@
    second knob to keep in sync with it is how the two drift apart. */
 :root{
   --bg:#e8e6dc; --surface:#faf9f5; --surface-2:#f2f0e8;
-  --ink:#141413; --ink-2:#6f6e68; --ink-3:#93918a;
+  --ink:#141413; --ink-2:#6f6e68; --ink-3:#727169;
   --rule:color-mix(in srgb,#b0aea5 62%,transparent);
-  --sel:#e8e6dc; --hover:#ffffff; --caret:#d97757;
+  --sel:#e8e6dc; --hover:#ffffff; --caret:#c4512c;
   --act:#a53a2e; --act-2:#d97757;
   --job:#3668a0; --job-2:#6a9bcc;
   --gls:#8a6a10; --gls-2:#b88a28;

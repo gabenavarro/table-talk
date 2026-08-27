@@ -12,9 +12,11 @@ Live view: `table-talk serve` → http://127.0.0.1:8731
 
 **The first sentence of an action is the ask, and nothing else.** One sentence,
 ≤ 25 words, ending in a question mark or naming a choice between options.
-At most two more sentences may follow, after an em dash in the same cell;
-anything beyond that goes in the reply body, where prose belongs. The ask is the
-thing only the user can settle — not what you did, not how you got there.
+Detail may follow after an em dash in the same cell: ≤ 2 sentences **and ≤ 50
+words**. `--why` and `--rec` are **≤ 40 words each**. Sentences, commas and
+semicolons are free units — the word counts are what bind, and anything past
+them goes in the reply body, where prose belongs. The ask is the thing only the
+user can settle — not what you did, not how you got there.
 
 ### Before / after — this project's own failure
 
@@ -51,17 +53,15 @@ thing only the user can settle — not what you did, not how you got there.
 | "The context is genuinely complicated" | The decision is still one sentence. Complicated context goes after the em dash. |
 | "They need to know how I got here" | They need to know what to decide. How you got there is the reply body. |
 | "The recommendation explains it anyway" | The reader reads left to right. A column three cells away is not the ask. |
-| "It's all relevant" | Relevant to you. The ask is what is relevant to them. |
-| "The ask is obvious from the detail" | If it were, you could write it in one sentence. Write that sentence instead. |
-| "I'll state the finding, then ask" | The finding is evidence, not the ask. Lead with the question. |
 | "Trimming loses information" | The cell is not the archive — the reply body, the log and the PR all still exist. |
 
 ### Self-check before recording
 
 Read your first sentence on its own. If it does not end in a question mark or
-name a choice between options, rewrite it before you run the command. An ask
-that is a request rather than a choice is still a question: "Can you upload
-docs/assets/hero.png as the repo's social preview?"
+name a choice between options, rewrite it before you run the command. Then count
+words: ask ≤ 25, detail after the dash ≤ 50 (and ≤ 2 sentences), `--why` ≤ 40,
+`--rec` ≤ 40. An ask that is a request rather than a choice is still a question:
+"Can you upload docs/assets/hero.png as the repo's social preview?"
 
 ## Record as you go
 
@@ -100,19 +100,17 @@ technical = the precise definition, jargon spelled out.
 ## The dashboard
 
 A tmux-style wall: one window per session file, carrying tmux flags — `!` bell
-(a new action), `#` activity, `M` marked, `Z` zoomed, `*` current. The left
-drawer groups sessions under their project with count badges and htop-style
-meters; clicking a project scopes the wall to it, a session scrolls to its window.
+(a new action), `#` activity, `M` marked, `Z` zoomed, `*` current; the left
+drawer groups sessions under their project.
 
-Keys, mirrored as statusline chips (`?` lists them): `\` drawer, `m` mark,
-`z` zoom, `f` fold, `s` sort (recent → actions → project), `/` filter,
+Keys, most of them mirrored as statusline chips (`?` lists them): `\` drawer,
+`m` mark, `z` zoom, `f` fold, `s` sort (recent → actions → project), `/` filter,
 `!` needs-me (drop windows with nothing open), `Esc` unzoom.
 
 Filtering **dims** non-matching rows rather than hiding them, and highlights the
-match. Rows that moved since you last interacted with the page keep a coloured
-change gutter. Clicking an id copies `table-talk done <id>`; paths in the text
-that resolve to a real file are clickable and open in the configured command.
+match. Clicking an id copies `table-talk done <id>`, real paths open in the
+configured command, and rows that moved since you last interacted keep a gutter.
 
 Config: `~/.config/table-talk/config.toml`, overridable with `TABLE_TALK_CONFIG`
 — port, poll interval, columns, drawer state, `links.open_command`, theme mode
-and every colour token. Missing or malformed file → defaults, never a crash.
+and colour tokens. Missing or malformed file → defaults, never a crash.

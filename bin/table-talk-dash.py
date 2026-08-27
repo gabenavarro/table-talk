@@ -648,7 +648,8 @@ def selftest():
     # both palettes, keyed the way the design spec pins them
     assert "--bg:#1d2021" in css and "--surface:#282828" in css, "gruvbox-dark ground and surface"
     assert "--bg:#e8e6dc" in css and "--surface:#faf9f5" in css, "claude-code-light ground and surface"
-    assert "--caret:#8ec07c" in css and "--caret:#d97757" in css, "cursor colour per theme"
+    # light's caret is claude-code-light's #d97757 darkened to clear 4.5:1 on --hover
+    assert "--caret:#8ec07c" in css and "--caret:#c4512c" in css, "cursor colour per theme"
     assert "--act:#fb4934" in css and "--act:#a53a2e" in css
     assert "body.body--dark" in css, "dark palette must key off Quasar's body--dark"
     assert "tabular-nums" in css, "digit columns must align"
