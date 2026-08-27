@@ -5,6 +5,7 @@
 # ///
 """table-talk dashboard: live NiceGUI view of the table-talk event logs."""
 import argparse
+import json
 import logging
 import time
 from datetime import datetime
@@ -90,6 +91,22 @@ document.addEventListener('DOMContentLoaded', () => {
 # Advances one frame per SUCCESSFUL poll and freezes when a poll fails: liveness
 # you can trust, rather than an abstract pulse dot you have to interpret.
 SPINNER = ("⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏")
+
+
+def scroll_js(key):
+    """JS that scrolls one window into view.
+
+    The session key crosses into JS as a json.dumps LITERAL and is compared
+    there; no selector is ever built from it. Concatenated into a quoted
+    selector it was executable - `--project "y'+alert(9)+'z"` ran alert(9) on an
+    ordinary drawer-row click - and it broke benignly too: --project defaults to
+    the cwd name, so a directory called don't-panic killed click-to-scroll.
+    Escaping a selector is the wrong repair; not building one is the fix.
+    """
+    return (f'requestAnimationFrame(()=>{{const k={json.dumps(key)};'
+            '[...document.querySelectorAll("[data-window]")]'
+            '.find(e=>e.dataset.window===k)'
+            '?.scrollIntoView({behavior:"smooth",block:"start"})})')
 
 
 def tally_text(open_actions, open_tasks):
@@ -238,9 +255,13 @@ def _dim(ev, query):
 
 def _id_button(ev, cls):
     """The id IS the command. A nested label rather than a bare button so we stay
-    on public API; the delegated listener finds the button via closest()."""
+    on public API; the delegated listener finds the button via closest().
+
+    The prop is assigned, never .props(f'data-id={...}'): see build_window."""
     from nicegui import ui
-    with ui.element("button").props(f'data-id={ev["id"]}').classes(f"id {cls}"):
+    btn = ui.element("button").classes(f"id {cls}")
+    btn.props["data-id"] = str(ev["id"])
+    with btn:
         ui.label(str(ev["id"]))
 
 
@@ -340,9 +361,15 @@ def _prompt(cls, title, count, toggles=None, opened=None, key="", force=False):
     toggles.set_visibility(shown)
 
     def flip(_):
-        opened[key] = not (force or opened[key])
-        toggles.set_visibility(opened[key])
-        caret.set_text(f"({count}) " + ("▾" if opened[key] else "▸"))
+        # Toggle against the LIVE visibility. `force` and `shown` are constants
+        # captured for this render and nothing rebuilds the body on a click, so
+        # `not (force or opened[key])` evaluated `not True` on every click of a
+        # filter-forced section: the first collapsed it and every one after was
+        # dead. Reading the element is the only source of truth a click has.
+        now = not toggles.visible
+        opened[key] = now
+        toggles.set_visibility(now)
+        caret.set_text(f"({count}) " + ("▾" if now else "▸"))
 
     line.on("click", flip)
 
@@ -536,12 +563,59 @@ def selftest():
     assert changed_ids({}, 0) == set()
     assert changed_ids({"x": {"id": "x", "type": "action"}}, 0) == set(), \
         "a row with no ts predates every watermark; it must not mark itself"
+    # scroll_js: the key is DATA. Balance is asserted because an unbalanced
+    # payload is a silent no-op - the browser throws a SyntaxError nobody sees
+    # and click-to-scroll simply stops working (measured: one stray brace).
+    js = scroll_js("y'+alert(9)+'z")
+    assert js.count("{") == js.count("}") and js.count("(") == js.count(")"), \
+        f"unbalanced JS payload: {js}"
+    assert '[data-window="' not in js, "a selector must never be built from the key"
+    assert json.loads(js.split("const k=")[1].split(";")[0]) == "y'+alert(9)+'z", \
+        "the key round-trips as a JS string literal, quotes and all"
+    for hostile in ('a"b', "it's", "a\"'b", "back\\slash", "</script>"):
+        assert json.loads(scroll_js(hostile).split("const k=")[1].split(";")[0]) == hostile
     assert "visibilitychange" in VISIBILITY_JS and "emitEvent" in VISIBILITY_JS
     assert "\nttSeen();" in VISIBILITY_JS, \
         "a tab that was ALREADY hidden when it loaded fires no visibilitychange " \
         "ever, so the state must also be announced once at startup"
     assert ".win-b .row.changed{" in css and ".win-b .row.changed-job{" in css, \
         "gutter colours must differ by kind, and stay scoped off Quasar's .row"
+    cur = css.split(".win.cur>.win-t{")[1].split("}")[0]
+    assert "color-mix" in cur and "var(--sel)" in cur and "inset 0 -2px 0 var(--caret)" in cur, \
+        "the current titlebar TINTS toward --sel and keeps the caret underline: " \
+        "--sel outright is ~2.9x the luminance the glyphs were chosen against " \
+        "and drops the ! bell to 1.89:1, and target() marks a window .cur on the " \
+        "very first paint, so nobody has to click anything to hit it"
+
+    # Everything below reads this file as text: these are properties of the
+    # SOURCE, and every one of them is a bug that shipped once already.
+    import ast
+    src = Path(__file__).read_text()
+    dyn = [n.lineno for n in ast.walk(ast.parse(src))
+           if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
+           and n.func.attr == "props"
+           and any(not isinstance(a, ast.Constant)
+                   for a in [*n.args, *(k.value for k in n.keywords)])]
+    assert not dyn, (
+        f"a computed value reaches the .props() STRING parser at line(s) {dyn}. "
+        "That string is parsed (PROPS_PATTERN splits on whitespace outside "
+        "quotes), so a value carrying a double quote closes the attribute and "
+        "opens new ones: --project 'p\" onmouseover=\"alert(1)' put a real "
+        "handler on the window. Assign it instead: el.props['data-window'] = key")
+    assert 'el.props["data-window"] = key' in src and 'btn.props["data-id"] = str(ev["id"])' in src
+    assert "ui.run_javascript(scroll_js(key))" in src, \
+        "on_focus must go through scroll_js, which hands the key to JS as a " \
+        "json.dumps LITERAL. Spliced into a selector, --project \"y'+alert(9)+'z\" " \
+        "ran on an ordinary drawer click - and don't-panic broke the scroll"
+    assert src.index("paint_window(win, k, states[k]") < src.index('win["sig"] = sig'), \
+        "the paint signature is recorded AFTER the paint: assigned first, one " \
+        "exception mid-build marks a half-drawn window current forever"
+    assert src.index('srow.on("click"') < src.index("container.tt_sig = sig"), \
+        "same for the drawer: its signature is recorded after the tree is built"
+    assert "not toggles.visible" in src, \
+        "_prompt's flip must toggle against the LIVE visibility - `force` and " \
+        "`shown` are constants captured for the render, so a filter-forced " \
+        "section evaluated `not True` on every click and went dead after one"
     print("ok")
 
 
@@ -763,8 +837,19 @@ def main(port):
         """Everything about a window that never changes: its project is its file's
         name. The tmux index is NOT one of those - it is position by recency
         within the project, so every older sibling shifts down when a newer
-        session file lands. It is set from `where` on every tick instead."""
-        el = ui.element("div").classes("win").props(f'data-window="{key}"')
+        session file lands. It is set from `where` on every tick instead.
+
+        Every prop whose value comes from a session file is ASSIGNED, never
+        interpolated into a .props() string. The string form is parsed
+        (nicegui/props.py PROPS_PATTERN splits on whitespace outside quotes), so
+        a value carrying a double quote closes the attribute and opens new ones:
+        `table-talk action pwn --why w --rec r --project 'p" onmouseover="..."'`
+        put a REAL onmouseover handler on this element - safe_project() strips
+        only / \\ NUL, so the CLI happily accepts it. props is an ObservableDict
+        whose on_change updates the element, and the dict form is never parsed.
+        """
+        el = ui.element("div").classes("win")
+        el.props["data-window"] = key
         # clicking anywhere in a window makes it current, M/Z/▾ included
         el.on("click", lambda _, k=key: on_pick(k), [])
         with el:
@@ -781,7 +866,8 @@ def main(port):
                     for act, glyph, tip in (("mark", "M", "Mark (m) — hold at the front"),
                                             ("zoom", "Z", "Zoom (z) — fill the wall"),
                                             ("fold", "▾", "Fold (f) — collapse to the titlebar")):
-                        btn = ui.element("button").classes("wb").props(f'title="{tip}"')
+                        btn = ui.element("button").classes("wb")
+                        btn.props["title"] = tip
                         with btn:
                             ui.label(glyph)
                         btn.on("click", lambda _, k=key, a=act: on_window_action(k, a))
@@ -824,11 +910,9 @@ def main(port):
             put("scope", None)
             put("needs_me", False)
             tick()
-        # rAF: the window may have only just been moved back onto the wall
-        ui.run_javascript(
-            'requestAnimationFrame(() => document.querySelector('
-            f'\'[data-window="{key}"]\')'
-            '?.scrollIntoView({behavior:"smooth",block:"start"}))')
+        # rAF: the window may have only just been moved back onto the wall.
+        # The key is data, never code: see scroll_js.
+        ui.run_javascript(scroll_js(key))
 
     def on_cols(n):
         """cols is read from storage per tick, so writing it and re-ticking is the
@@ -950,7 +1034,6 @@ def main(port):
         sig = drawer_sig(groups, collapsed)
         if getattr(container, "tt_sig", None) == sig:
             return
-        container.tt_sig = sig
         container.clear()
         with container:
             if collapsed:
@@ -960,7 +1043,8 @@ def main(port):
                 for g in groups:
                     rail = ui.element("button").classes(
                         "rail-item dw-on" if g["project"] == scope else "rail-item")
-                    rail.props(f'data-project="{g["project"]}" title="{g["project"]}"')
+                    rail.props["data-project"] = g["project"]
+                    rail.props["title"] = g["project"]
                     with rail:
                         ui.label(abbrev(g["project"])).classes("rail-ab")
                         ui.label(f'●{g["open_actions"]}').classes(
@@ -968,61 +1052,65 @@ def main(port):
                         with ui.element("div").classes("rail-t"):
                             ui.element("i").style(f'width:{g["pct"]}%')
                     rail.on("click", lambda _, p=g["project"]: on_scope(p))
-                return
-            with ui.element("div").classes("dw-top"):
-                ui.label("sessions").classes("ttl")
-                n = sum(len(g["sessions"]) for g in groups)
-                ui.label(f"{n} · {len(groups)} projects")
-            sort_row = ui.element("div").classes("dw-sort")
-            with sort_row:
-                ui.label("sort:")
-                for mode in M.SORTS:
-                    # <b>, not a class: .dw-sort b is what the stylesheet marks up
-                    with ui.element("b") if mode == store("sort", "recent") else ui.element("span"):
-                        ui.label(mode)
-            sort_row.on("click", lambda _: cycle_sort())
-            for g in groups:
-                # a project with one session is one flat row: a group of one is noise
-                single = len(g["sessions"]) == 1
-                folded = g["project"] in groups_folded and not single
-                row = ui.element("button").classes(
-                    "dw-row dw-proj dw-on" if g["project"] == scope else "dw-row dw-proj")
-                row.props(f'data-project="{g["project"]}"')
-                with row:
-                    # The triangle is a control, not decoration: it folds the
-                    # group, and click.stop keeps that click off the row, which
-                    # scopes. Without the stop, the only affordance promising a
-                    # way back into a folded group scopes the wall instead and
-                    # the tree stays truncated with no way to reopen it.
-                    tri = ui.label(GUIDES["none"] if single else
-                                   (GUIDES["closed"] if folded else GUIDES["open"]))
-                    tri.classes("dw-g" if single else "dw-g dw-fold")
-                    if not single:
-                        tri.props(f'title="fold {g["project"]}"')
-                        tri.on("click.stop", lambda _, p=g["project"]: on_group_fold(p), [])
-                    with ui.element("div").classes("dw-l1"):
-                        ui.label(g["project"]).classes("dw-nm")
-                        ui.label(g["sessions"][0]["date"] if single
-                                 else f'{len(g["sessions"])} sessions').classes("dw-meta")
-                    # the │ under an open group is what its ├ children hang from
-                    ui.label(GUIDES["none"] if single or folded
-                             else GUIDES["line"]).classes("dw-g")
-                    meter_row(g)
-                row.on("click", lambda _, p=g["project"]: on_scope(p))
-                if single or folded:
-                    continue
-                for i, sess in enumerate(g["sessions"]):
-                    last = i == len(g["sessions"]) - 1
-                    srow = ui.element("button").classes("dw-row dw-sess")
-                    srow.props(f'data-session="{sess["key"]}"')
-                    with srow:
-                        ui.label(GUIDES["last"] if last else GUIDES["mid"]).classes("dw-g")
+            else:
+                with ui.element("div").classes("dw-top"):
+                    ui.label("sessions").classes("ttl")
+                    n = sum(len(g["sessions"]) for g in groups)
+                    ui.label(f"{n} · {len(groups)} projects")
+                sort_row = ui.element("div").classes("dw-sort")
+                with sort_row:
+                    ui.label("sort:")
+                    for mode in M.SORTS:
+                        # <b>, not a class: .dw-sort b is what the stylesheet marks up
+                        with ui.element("b") if mode == store("sort", "recent") else ui.element("span"):
+                            ui.label(mode)
+                sort_row.on("click", lambda _: cycle_sort())
+                for g in groups:
+                    # a project with one session is one flat row: a group of one is noise
+                    single = len(g["sessions"]) == 1
+                    folded = g["project"] in groups_folded and not single
+                    row = ui.element("button").classes(
+                        "dw-row dw-proj dw-on" if g["project"] == scope else "dw-row dw-proj")
+                    row.props["data-project"] = g["project"]
+                    with row:
+                        # The triangle is a control, not decoration: it folds the
+                        # group, and click.stop keeps that click off the row, which
+                        # scopes. Without the stop, the only affordance promising a
+                        # way back into a folded group scopes the wall instead and
+                        # the tree stays truncated with no way to reopen it.
+                        tri = ui.label(GUIDES["none"] if single else
+                                       (GUIDES["closed"] if folded else GUIDES["open"]))
+                        tri.classes("dw-g" if single else "dw-g dw-fold")
+                        if not single:
+                            tri.props["title"] = f'fold {g["project"]}'
+                            tri.on("click.stop", lambda _, p=g["project"]: on_group_fold(p), [])
                         with ui.element("div").classes("dw-l1"):
-                            ui.label(sess["date"]).classes("dw-nm")
-                            ui.label(ago(sess["summary"]["latest"])).classes("dw-meta")
-                        ui.label(GUIDES["none"] if last else GUIDES["line"]).classes("dw-g")
-                        meter_row(sess["summary"])
-                    srow.on("click", lambda _, k=sess["key"]: on_focus(k))
+                            ui.label(g["project"]).classes("dw-nm")
+                            ui.label(g["sessions"][0]["date"] if single
+                                     else f'{len(g["sessions"])} sessions').classes("dw-meta")
+                        # the │ under an open group is what its ├ children hang from
+                        ui.label(GUIDES["none"] if single or folded
+                                 else GUIDES["line"]).classes("dw-g")
+                        meter_row(g)
+                    row.on("click", lambda _, p=g["project"]: on_scope(p))
+                    if single or folded:
+                        continue
+                    for i, sess in enumerate(g["sessions"]):
+                        last = i == len(g["sessions"]) - 1
+                        srow = ui.element("button").classes("dw-row dw-sess")
+                        srow.props["data-session"] = sess["key"]
+                        with srow:
+                            ui.label(GUIDES["last"] if last else GUIDES["mid"]).classes("dw-g")
+                            with ui.element("div").classes("dw-l1"):
+                                ui.label(sess["date"]).classes("dw-nm")
+                                ui.label(ago(sess["summary"]["latest"])).classes("dw-meta")
+                            ui.label(GUIDES["none"] if last else GUIDES["line"]).classes("dw-g")
+                            meter_row(sess["summary"])
+                        srow.on("click", lambda _, k=sess["key"]: on_focus(k))
+        # Recorded only after a CLEAN build, never before it: an exception
+        # mid-tree would otherwise leave a half-drawn drawer marked up to
+        # date, and no later poll would ever repaint it.
+        container.tt_sig = sig
 
     def dress(key, win):
         """Every class on a window: `hot` comes from its data, marked/folded/zoomed
@@ -1060,7 +1148,8 @@ def main(port):
             f'{summary["resolved"]}/{summary["recorded"]} resolved'
             + (" · all clear" if summary["open_actions"] == 0 and summary["open_tasks"] == 0 else ""))
         win["latest"] = summary["latest"]
-        win["when"].props(f'title="{stamp(summary["latest"])}"' if summary["latest"] else "")
+        win["when"].props.set_optional(
+            "title", stamp(summary["latest"]) if summary["latest"] else None)
         render_window_body(win["body"], state, newest, query, changed)
 
     def repack(visible, cols, weights):
@@ -1159,8 +1248,12 @@ def main(port):
             changed = changed_ids(states[k], seen_at.get(k, opened_ts))
             sig = (query, newest, states[k], changed)
             if win["sig"] != sig:
-                win["sig"] = sig
                 paint_window(win, k, states[k], newest, query, changed)
+                # AFTER the paint, never before: an exception mid-build (one
+                # non-string field is enough) would otherwise leave the window
+                # permanently marked up to date and truncated where it threw.
+                # Recorded last, the next poll simply paints it again.
+                win["sig"] = sig
             # both advance without the window's own data changing: age with the
             # clock, the tmux index whenever a newer sibling session appears
             for el, txt in ((win["when"], ago(win["latest"]) if win["latest"] else ""),
