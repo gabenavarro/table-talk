@@ -38,6 +38,10 @@ THEME_MODES = ("system", "light", "dark")
 # button styling left in the sheet is the statusline's.
 THEME_ICONS = {"system": "◐", "light": "☀", "dark": "☾"}
 
+# tmux choose-tree guides. Kept as literal glyphs so the verticals connect in a
+# fixed-width column rather than being faked with borders.
+GUIDES = {"open": "▾", "closed": "▸", "mid": "├", "last": "└", "line": "│", "none": " "}
+
 MAX_CELLS = 20     # a long session must not wreck the footer line
 BAR_CELLS = 14
 
@@ -268,6 +272,11 @@ def render_window_body(container, state, newest_action_id, query="", changed=())
         done_box.move(container, -1)
 
 
+def abbrev(project):
+    """Three-letter tag for the collapsed rail."""
+    return project[:3] if project else "?"
+
+
 def default_cols(width):
     """Column count before the user picks one. Three on a wide second monitor."""
     return 3 if width >= 1800 else (2 if width >= 1200 else 1)
@@ -338,6 +347,13 @@ def selftest():
     assert a != layout_key(["x", "y"], 2, {"x"}, set(), None, "phe", "recent", True), "scope"
     assert a != layout_key(["x", "y"], 2, {"x"}, set(), None, None, "actions", True), "sort"
     assert a != layout_key(["x", "y"], 2, {"x"}, set(), None, None, "recent", False), "drawer"
+    assert abbrev("phephree") == "phe"
+    assert abbrev("table-talk") == "tab"
+    assert abbrev("ab") == "ab", "a short name is not padded"
+    assert abbrev("") == "?"
+    assert GUIDES == {"open": "▾", "closed": "▸", "mid": "├", "last": "└", "line": "│", "none": " "}
+    assert ".dw-row" in css and ".trk i" in css and ".rail-t" in css, \
+        "the tree, its meters and the collapsed rail all need styles to mean anything"
     print("ok")
 
 
@@ -387,6 +403,7 @@ def main(port):
     # handler only has to write them for the next tick to pick them up.
     marks = set(store("marks", []))
     folds = set(store("folds", []))
+    groups_folded = set(store("groups_folded", []))
     zoomed = store("zoomed", None)
     scope = store("scope", None)
 
@@ -458,6 +475,133 @@ def main(port):
                 "zoom": zoom, "when": when, "cells": cells, "tally": tally,
                 "hot": False, "latest": 0, "sig": None}
 
+    seen_projects = set()
+
+    def on_scope(project):   # replaced in Task 12
+        pass
+
+    def on_focus(key):       # replaced in Task 12
+        pass
+
+    def cycle_sort():        # replaced in Task 12
+        pass
+
+    def meter_row(summary):
+        """The badge pair and htop meter carried by every drawer row, project and
+        session alike. A zero badge goes grey rather than disappearing, so the
+        columns stay aligned down the tree."""
+        with ui.element("div").classes("dw-l2"):
+            for count, glyph, cls in ((summary["open_actions"], "●", "b-act"),
+                                      (summary["open_tasks"], "▶", "b-job")):
+                ui.label(f"{glyph}{count}").classes(cls if count else "b-off")
+            pct = summary["pct"]
+            with ui.element("div").classes("mtr"):
+                ui.label("[")
+                with ui.element("div").classes("trk"):
+                    fill = ui.element("i").style(f"width:{pct}%")
+                    if pct >= 100:
+                        fill.classes("full")
+                ui.label("]")
+            ui.label(f"{pct}%").classes("pc")
+
+    def apply_fold_rules(groups):
+        """A project with nothing open folds the first time we see it, so the
+        drawer opens showing only what is live. A poll that raises the open-action
+        count forces the group back open: a fold must never hide something that
+        just started needing you."""
+        changed = False
+        for g in groups:
+            project = g["project"]
+            if project not in seen_projects:
+                seen_projects.add(project)
+                if g["open_actions"] == 0:
+                    groups_folded.add(project)
+                    changed = True
+            elif g["open_actions"] > 0 and project in groups_folded:
+                groups_folded.discard(project)
+                changed = True
+        if changed:
+            put("groups_folded", sorted(groups_folded))
+
+    def drawer_sig(groups, collapsed):
+        """Everything the tree draws, in one comparable value. The poll runs every
+        2 s and the drawer usually has nothing new to say; rebuilding it anyway
+        would drop hover and keyboard focus off a row somebody is reading."""
+        return (collapsed, store("sort", "recent"), tuple(sorted(groups_folded)),
+                tuple((g["project"], g["open_actions"], g["open_tasks"], g["pct"],
+                       tuple((s["key"], s["date"], s["summary"]["open_actions"],
+                              s["summary"]["open_tasks"], s["summary"]["pct"],
+                              ago(s["summary"]["latest"])) for s in g["sessions"]))
+                      for g in groups))
+
+    def render_drawer(container, groups):
+        collapsed = not store("drawer_open", True)
+        sig = drawer_sig(groups, collapsed)
+        if getattr(container, "tt_sig", None) == sig:
+            return
+        container.tt_sig = sig
+        container.clear()
+        with container:
+            if collapsed:
+                # 54 px of drawer: the three-letter tag, what is waiting, and the
+                # meter. Same click target as the full row, so scope survives the
+                # collapse rather than being a different feature at another width.
+                for g in groups:
+                    rail = ui.element("button").classes("rail-item")
+                    rail.props(f'data-project="{g["project"]}" title="{g["project"]}"')
+                    with rail:
+                        ui.label(abbrev(g["project"])).classes("rail-ab")
+                        ui.label(f'●{g["open_actions"]}').classes(
+                            "b-act" if g["open_actions"] else "b-off")
+                        with ui.element("div").classes("rail-t"):
+                            ui.element("i").style(f'width:{g["pct"]}%')
+                    rail.on("click", lambda _, p=g["project"]: on_scope(p))
+                return
+            with ui.element("div").classes("dw-top"):
+                ui.label("sessions").classes("ttl")
+                n = sum(len(g["sessions"]) for g in groups)
+                ui.label(f"{n} · {len(groups)} projects")
+            sort_row = ui.element("div").classes("dw-sort")
+            with sort_row:
+                ui.label("sort:")
+                for mode in M.SORTS:
+                    # <b>, not a class: .dw-sort b is what the stylesheet marks up
+                    with ui.element("b") if mode == store("sort", "recent") else ui.element("span"):
+                        ui.label(mode)
+            sort_row.on("click", lambda _: cycle_sort())
+            for g in groups:
+                # a project with one session is one flat row: a group of one is noise
+                single = len(g["sessions"]) == 1
+                folded = g["project"] in groups_folded and not single
+                row = ui.element("button").classes("dw-row dw-proj")
+                row.props(f'data-project="{g["project"]}"')
+                with row:
+                    ui.label(GUIDES["none"] if single else
+                             (GUIDES["closed"] if folded else GUIDES["open"])).classes("dw-g")
+                    with ui.element("div").classes("dw-l1"):
+                        ui.label(g["project"]).classes("dw-nm")
+                        ui.label(g["sessions"][0]["date"] if single
+                                 else f'{len(g["sessions"])} sessions').classes("dw-meta")
+                    # the │ under an open group is what its ├ children hang from
+                    ui.label(GUIDES["none"] if single or folded
+                             else GUIDES["line"]).classes("dw-g")
+                    meter_row(g)
+                row.on("click", lambda _, p=g["project"]: on_scope(p))
+                if single or folded:
+                    continue
+                for i, sess in enumerate(g["sessions"]):
+                    last = i == len(g["sessions"]) - 1
+                    srow = ui.element("button").classes("dw-row dw-sess")
+                    srow.props(f'data-session="{sess["key"]}"')
+                    with srow:
+                        ui.label(GUIDES["last"] if last else GUIDES["mid"]).classes("dw-g")
+                        with ui.element("div").classes("dw-l1"):
+                            ui.label(sess["date"]).classes("dw-nm")
+                            ui.label(ago(sess["summary"]["latest"])).classes("dw-meta")
+                        ui.label(GUIDES["none"] if last else GUIDES["line"]).classes("dw-g")
+                        meter_row(sess["summary"])
+                    srow.on("click", lambda _, k=sess["key"]: on_focus(k))
+
     def dress(key, win):
         """Every class on a window: `hot` comes from its data, marked/folded/zoomed
         from the layout. One place, or the two callers clobber each other's
@@ -523,7 +667,10 @@ def main(port):
         where = {s["key"]: (g["project"], s["index"]) for g in groups for s in g["sessions"]}
         sort = store("sort", "recent")
         # the wall has no sort of its own: it reads in the drawer's order
-        order = [s["key"] for g in M.sort_groups(groups, sort) for s in g["sessions"]]
+        ordered = M.sort_groups(groups, sort)
+        order = [s["key"] for g in ordered for s in g["sessions"]]
+        apply_fold_rules(ordered)     # before the render, or a forced-open group draws folded
+        render_drawer(drawer, ordered)
 
         for key in list(windows):              # a session file went away
             if key not in states:

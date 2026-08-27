@@ -63,8 +63,11 @@ body{background:var(--bg);color:var(--ink);margin:0}
   border-bottom:1px solid var(--rule);font-size:11px;color:var(--ink-3)}
 .dw-top .ttl{font-weight:700;color:var(--ink);letter-spacing:.05em;
   text-transform:uppercase;font-size:10.5px}
-.dw-sort{padding:5px 10px;border-bottom:1px solid var(--rule);color:var(--ink-3);
-  font-size:11px;cursor:pointer}
+/* flex, or every mode stacks onto its own line: ui.label emits a div, and a
+   block child of a block parent is a new line - the same trap .blocks and
+   .cells fell into further down */
+.dw-sort{display:flex;align-items:baseline;gap:7px;padding:5px 10px;
+  border-bottom:1px solid var(--rule);color:var(--ink-3);font-size:11px;cursor:pointer}
 .dw-sort b{color:var(--gls);font-weight:700}
 .dw-row{display:grid;grid-template-columns:15px 1fr;gap:1px 4px;width:100%;text-align:left;
   border:0;background:transparent;font:inherit;color:inherit;cursor:pointer;padding:6px 10px 7px}
