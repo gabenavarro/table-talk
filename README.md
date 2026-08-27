@@ -110,3 +110,17 @@ started. A missing or broken file just falls back to the defaults.
 ## Test
 
     ./test.sh
+
+Every change runs all four selftests — the CLI, the model, the config loader
+and the dashboard. There is no separate test framework: each file pins its own
+behaviour in a `selftest()`, and a change that breaks one fails loudly.
+
+## Contributing
+
+Issues and pull requests are welcome from anyone — open an issue to report a
+bug or suggest something, or fork the repo and send a PR.
+
+`main` is protected by a ruleset: it takes no direct pushes, no force-pushes
+and no deletion, so every change lands through a pull request. Branch from
+`main`, keep `./test.sh` green, and open a PR; no approving review is
+required, so a green PR can be merged as soon as it is ready.
