@@ -120,7 +120,10 @@ behaviour in a `selftest()`, and a change that breaks one fails loudly.
 Issues and pull requests are welcome from anyone — open an issue to report a
 bug or suggest something, or fork the repo and send a PR.
 
-`main` is protected by a ruleset: it takes no direct pushes, no force-pushes
-and no deletion, so every change lands through a pull request. Branch from
-`main`, keep `./test.sh` green, and open a PR; no approving review is
-required, so a green PR can be merged as soon as it is ready.
+`main` is protected by two rulesets. The first takes no direct pushes, no
+force-pushes and no deletion, and requires the `test` check — `./test.sh` run
+by [the workflow](.github/workflows/test.yml) — to pass. Nobody bypasses it:
+a red build cannot reach `main`. The second requires one approving review,
+and only a repository admin can bypass it, and only through a pull request.
+
+So: branch from `main`, keep `./test.sh` green, open a PR, and get a review.
