@@ -28,6 +28,7 @@ COPY_JS = """<script>
 document.addEventListener('click', e => {
   const b = e.target.closest && e.target.closest('[data-id]');
   if (!b) return;
+  if (!/^[0-9a-f]{4,}$/.test(b.dataset.id || '')) return;  // it becomes a SHELL command
   const cmd = 'table-talk done ' + b.dataset.id;
   if (navigator.clipboard) navigator.clipboard.writeText(cmd).catch(() => {});
   b.classList.add('copied');
@@ -494,6 +495,9 @@ def selftest():
     on, off = resolved_cells(30, 60)
     assert len(on) + len(off) == 20, "cells cap at 20 so a long session cannot wreck the footer"
     assert "data-id" in COPY_JS and "clipboard" in COPY_JS
+    assert "[0-9a-f]{4,}" in COPY_JS, \
+        "what COPY_JS builds is a SHELL COMMAND the user pastes, so the id it " \
+        "splices must look like a minted id (secrets.token_hex) and nothing else"
     assert ".tt-dim" in css and ".tt-hit" in css, "dim and highlight need styles to mean anything"
     assert ".dw-find" in css and ".tt-none" in css, "the filter bar and empty wall need styles"
     assert default_cols(2000) == 3 and default_cols(1400) == 2 and default_cols(800) == 1
@@ -589,8 +593,16 @@ def selftest():
 
     # Everything below reads this file as text: these are properties of the
     # SOURCE, and every one of them is a bug that shipped once already.
+    #
+    # `code` is this file MINUS this function, and the string checks read it
+    # rather than src. Every needle below also appears here in the assertion
+    # that carries it, so searching the whole file makes each one satisfy
+    # itself: mutation-tested, all five stayed green with their fixes reverted -
+    # including on_focus rebuilt as a raw [data-window="{key}"] selector, which
+    # is the B2 exploit. An assertion that cannot fail is not a test.
     import ast
     src = Path(__file__).read_text()
+    code = src.split("def selftest():")[0] + src.split("\ndef ago(", 1)[1]
     dyn = [n.lineno for n in ast.walk(ast.parse(src))
            if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
            and n.func.attr == "props"
@@ -602,17 +614,21 @@ def selftest():
         "quotes), so a value carrying a double quote closes the attribute and "
         "opens new ones: --project 'p\" onmouseover=\"alert(1)' put a real "
         "handler on the window. Assign it instead: el.props['data-window'] = key")
-    assert 'el.props["data-window"] = key' in src and 'btn.props["data-id"] = str(ev["id"])' in src
-    assert "ui.run_javascript(scroll_js(key))" in src, \
+    assert 'el.props["data-window"] = key' in code, \
+        "the window's data-window prop must be ASSIGNED - without it the key " \
+        "never reaches the DOM and click-to-scroll has nothing to find"
+    assert 'btn.props["data-id"] = str(ev["id"])' in code, \
+        "the id button's data-id prop must be ASSIGNED; COPY_JS reads it"
+    assert "ui.run_javascript(scroll_js(key))" in code, \
         "on_focus must go through scroll_js, which hands the key to JS as a " \
         "json.dumps LITERAL. Spliced into a selector, --project \"y'+alert(9)+'z\" " \
         "ran on an ordinary drawer click - and don't-panic broke the scroll"
-    assert src.index("paint_window(win, k, states[k]") < src.index('win["sig"] = sig'), \
+    assert code.index("paint_window(win, k, states[k]") < code.index('win["sig"] = sig'), \
         "the paint signature is recorded AFTER the paint: assigned first, one " \
         "exception mid-build marks a half-drawn window current forever"
-    assert src.index('srow.on("click"') < src.index("container.tt_sig = sig"), \
+    assert code.index('srow.on("click"') < code.index("container.tt_sig = sig"), \
         "same for the drawer: its signature is recorded after the tree is built"
-    assert "not toggles.visible" in src, \
+    assert "not toggles.visible" in code, \
         "_prompt's flip must toggle against the LIVE visibility - `force` and " \
         "`shown` are constants captured for the render, so a filter-forced " \
         "section evaluated `not True` on every click and went dead after one"
