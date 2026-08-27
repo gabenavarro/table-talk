@@ -283,9 +283,12 @@ body{background:var(--bg);color:var(--ink);margin:0}
 .p-mag{color:var(--mag)}
 .win-b .row:has(.id-mag){grid-template-columns:96px 1fr}
 .id-mag{color:var(--mag);min-width:0;overflow-wrap:break-word}
-/* mermaid's own useMaxWidth already caps the SVG at 100% of this box; min-width:0
-   is the usual grid-item floor so the box can shrink to the column */
-.mmd{min-width:0}
+/* mermaid's neutral theme assumes a LIGHT ground: node fills are #eee, but
+   edges, arrowheads and free-standing text derive from invert(background) -
+   near-black drawn straight onto the page. So the card paints the white
+   ground the theme assumes, on both palettes; mermaid's own useMaxWidth
+   already caps the SVG at 100% of this box. */
+.mmd{background:#fff;border-radius:3px;padding:6px 8px}
 .mmd svg{display:block}
 
 /* ---- statusline ---- */

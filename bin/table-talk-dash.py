@@ -246,11 +246,13 @@ THEME_ICONS = {"system": "◐", "light": "☀", "dark": "☾"}
 # fixed-width column rather than being faked with borders.
 GUIDES = {"open": "▾", "closed": "▸", "mid": "├", "last": "└", "line": "│", "none": " "}
 
-# One fixed mermaid theme: in "system" mode the server cannot know the client's
-# prefers-color-scheme, so a per-theme render would be a guess. neutral is
-# greyscale and reads on both grounds. Applied as a per-render directive, not
-# initialize() config - initialize runs once per client and config after that
-# is silently ignored (verified against the bundled mermaid 11.16.1).
+# One fixed mermaid theme: in "system" mode the server cannot know the
+# client's prefers-color-scheme, so a per-theme render would be a guess.
+# neutral is the greyscale theme, rendered on the white card .mmd paints
+# (its edges assume a light ground - see tt.css). A per-render directive
+# rather than initialize() config: it travels with each render, per diagram.
+# securityLevel cannot be relaxed the same way - mermaid's directive
+# sanitiser blocks it - so strict stays strict.
 MERMAID_INIT = '%%{init: {"theme": "neutral"}}%%\n'
 
 MAX_CELLS = 20     # a long session must not wreck the footer line

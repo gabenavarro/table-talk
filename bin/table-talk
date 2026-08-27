@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""table-talk: record actions, background tasks, and technical terms for the
-table-talk reply protocol. Stdlib only — recording must never need the network.
-View: `table-talk serve` -> http://127.0.0.1:8731"""
+"""table-talk: record actions, background tasks, technical terms, and mermaid
+diagrams for the table-talk reply protocol. Stdlib only — recording must never
+need the network. View: `table-talk serve` -> http://127.0.0.1:8731"""
 import argparse
 import fcntl
 import glob
