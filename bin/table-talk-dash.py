@@ -561,7 +561,9 @@ def _done_row(ev, query):
     from nicegui import ui
     with ui.element("div").classes("row" + _dim(ev, query)):
         _id_button(ev, "id-ok")
-        _cell(ev.get("background") or ev.get("what", ""), query, "ttl")
+        with ui.element("div"):
+            _cell(ev.get("background") or ev.get("what", ""), query, "ttl")
+            _art_sub(ev)
 
 
 def _hits(evs, query):
@@ -1119,6 +1121,9 @@ def selftest():
     assert code.index('for field in ("why", "rec")') < code.index("_art_sub(ev)"), \
         "the sketch is the LAST guided sub-row: .sub:last-child draws the " \
         "tree corner, and a bare div after the subs would strand it mid-air"
+    assert code.count("_art_sub(ev)") == 4, \
+        "actions, jobs AND done rows draw the sketch: a resolved item is when " \
+        "the picture becomes reference, so dropping it there is backwards"
     assert code.count('ui.label("int").classes("lb")') == 2, \
         "both actions and jobs hang the plain-English line off the guide, " \
         "labeled the way the --intuitive flag is spelled"
