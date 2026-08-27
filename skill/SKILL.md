@@ -85,8 +85,11 @@ An action or task takes an optional ASCII sketch:
 — drawn centered under the item on the dashboard in the theme's colours, and
 `table-talk progress <id> "..." --diagram "..."` adds or replaces one on an
 existing item. Keep a sketch at most 40 columns wide and ~12 lines: it must
-fit the narrowest card. Box-drawing and arrows read best (┌─┐ │ → ▲). ASCII
-renders in the terminal too, so the same sketch can appear in the reply body.
+fit the narrowest card. Box-drawing and arrows read best (┌─┐ │ → ▲). Lay it
+out PORTRAIT — steps stacked top-to-bottom with ▼ between them, never a wide
+left-to-right chain: cards are narrow, and landscape either wraps or shrinks.
+ASCII renders in the terminal too, so the same sketch can appear in the reply
+body.
 
 Both also take `--intuitive "<one plain-English sentence>"` — what this is
 and what is needed, for a reader with no context, ≤ 25 words. It renders as
@@ -97,6 +100,9 @@ For a picture too big for a card, record a standalone mermaid diagram —
 `table-talk diagram "<mermaid source>" --title "<short name>"` — and point
 the user at the dashboard (http://127.0.0.1:8731), which renders it live;
 the terminal cannot. Re-recording the same title replaces that diagram.
+Portrait here too: `flowchart TD`, never `LR` — the dashboard renders it in
+the app's own font and colours inside a narrow card, and a landscape chain
+scales down until its labels are unreadable.
 
 ## End every reply with these tables (omit one only when truly empty)
 

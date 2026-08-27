@@ -283,13 +283,30 @@ body{background:var(--bg);color:var(--ink);margin:0}
 .p-mag{color:var(--mag)}
 .win-b .row:has(.id-mag){grid-template-columns:96px 1fr}
 .id-mag{color:var(--mag);min-width:0;overflow-wrap:break-word}
-/* mermaid's neutral theme assumes a LIGHT ground: node fills are #eee, but
-   edges, arrowheads and free-standing text derive from invert(background) -
-   near-black drawn straight onto the page. So the card paints the white
-   ground the theme assumes, on both palettes; mermaid's own useMaxWidth
-   already caps the SVG at 100% of this box. */
-.mmd{background:#fff;border-radius:3px;padding:6px 8px}
-.mmd svg{display:block}
+/* Mermaid, dressed as the app. It inlines its own stylesheet per SVG, so
+   only author !important rules win here - and keying them on the theme
+   tokens is what makes a diagram follow light/dark live, which no baked
+   ground could (in system mode the server cannot know the client's answer).
+   The font is NOT set here: mermaid measures labels with its configured
+   font, so it rides the init directive instead (see MERMAID_INIT). Coverage
+   is the flowchart + sequence primitives; a diagram type beyond those keeps
+   mermaid's base greys, which sit close enough to the dark palette to pass.
+   mermaid's own useMaxWidth caps the SVG at 100% of this box. */
+.mmd{padding:2px 0}
+.mmd svg{display:block;background:transparent}
+.mmd .node rect,.mmd .node circle,.mmd .node ellipse,.mmd .node polygon,
+.mmd .node path{fill:var(--surface-2)!important;stroke:var(--ink-3)!important}
+.mmd .nodeLabel,.mmd .label,.mmd text,.mmd p,.mmd span{
+  color:var(--ink)!important;fill:var(--ink)!important}
+.mmd .edgePath path,.mmd .flowchart-link{stroke:var(--ink-2)!important}
+.mmd .marker{fill:var(--ink-2)!important;stroke:var(--ink-2)!important}
+.mmd .edgeLabel,.mmd .edgeLabel p{background:var(--surface)!important;
+  color:var(--ink-2)!important}
+.mmd .cluster rect{fill:var(--surface)!important;stroke:var(--rule)!important}
+.mmd .actor{fill:var(--surface-2)!important;stroke:var(--ink-3)!important}
+.mmd .actor-line{stroke:var(--ink-3)!important}
+.mmd .messageLine0,.mmd .messageLine1{stroke:var(--ink-2)!important}
+.mmd .messageText{fill:var(--ink)!important;stroke:none!important}
 
 /* the item's ASCII sketch: one guided sub-row like why/rec, centered in the
    card per the spec. white-space:pre keeps the art's own geometry - the row's
