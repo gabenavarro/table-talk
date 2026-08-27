@@ -11,6 +11,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 
+import tt_config
 import tt_model as M
 from tt_model import DATA_DIR, fold_cached
 
@@ -21,6 +22,30 @@ def load_css():
     """The stylesheet lives beside the script so it can be edited as CSS.
     Read at startup; a missing file is a broken install, not a runtime path."""
     return CSS_PATH.read_text()
+
+
+def theme_css(theme):
+    """The config's palette as one stylesheet, holding only the tokens that
+    DIFFER from tt.css's own. An unset token emits nothing and inherits - a
+    restatement of the default is a second place to change it.
+
+    :root carries the light palette and body.body--dark the dark one, exactly as
+    tt.css orders them, so this block simply has to come after it.
+
+    Every value is re-checked with valid_colour HERE, at the point of emission:
+    load() validates on the way in, this validates on the way out, and a config
+    file is a second untrusted route into the stylesheet. The comprehension runs
+    over the DEFAULTS keys rather than the file's, so a token NAME out of the
+    file is only ever matched, never interpolated.
+    """
+    def block(sel, mode):
+        base = tt_config.DEFAULTS["theme"][mode]
+        got = theme.get(mode) or {}
+        decls = "".join(f"--{k}:{got[k]};" for k in base
+                        if k in got and got[k] != base[k] and tt_config.valid_colour(got[k]))
+        return f"{sel}{{{decls}}}" if decls else ""
+
+    return block(":root", "light") + block("body.body--dark", "dark")
 
 
 # Ids hand you the command: one delegated listener, no server round-trip.
@@ -375,7 +400,7 @@ def _prompt(cls, title, count, toggles=None, opened=None, key="", force=False):
     line.on("click", flip)
 
 
-def render_window_body(container, state, newest_action_id, query="", changed=()):
+def render_window_body(container, state, newest_action_id, query="", changed=(), collapsed=()):
     """Rebuild one window's body.
 
     A window holds a handful of rows, so rebuilding it is cheaper and far
@@ -389,12 +414,15 @@ def render_window_body(container, state, newest_action_id, query="", changed=())
 
     Which sections the user has expanded is kept on the container, which
     outlives the rebuild, so a poll cannot snap an open panel shut underneath a
-    reader. It dies with the container, so nothing has to clean it up.
+    reader. It dies with the container, so nothing has to clean it up. Which
+    ones START shut is ui.collapsed_sections, named the way the config names
+    them - the user's choice from then on outranks the file.
     """
     from nicegui import ui
     opened = getattr(container, "tt_open", None)
     if opened is None:
-        opened = container.tt_open = {"gls": False, "ok": False}
+        opened = container.tt_open = {"gls": "glossary" not in collapsed,
+                                      "ok": "done" not in collapsed}
     container.clear()
     with container:
         acts = open_rows(state, "action")
@@ -452,6 +480,7 @@ def layout_key(visible, cols, marks, folds, zoomed, scope, sort, drawer_open):
 
 
 def selftest():
+    import tempfile
     # fold/fold_cached now live in tt_model and are pinned by its own selftest.
     st = {"a": {"id": "a", "type": "action", "status": "open", "background": "bg", "ts": 1},
           "b": {"id": "b", "type": "action", "status": "done", "background": "old", "ts": 2},
@@ -480,6 +509,37 @@ def selftest():
     assert "ui-monospace" in css and "system-ui" in css, "both faces need a real fallback stack"
     assert "--ctp-" not in css, "the Catppuccin palette is gone"
     assert set(THEME_ICONS) == set(THEME_MODES)
+
+    # theme_css: the config is a second untrusted route into the stylesheet, and
+    # the only pure function on that route. Every value below is one a TOML file
+    # can carry - the emitter is not allowed to trust that load() cleaned it.
+    assert theme_css(tt_config.DEFAULTS["theme"]) == "", \
+        "a palette equal to the stylesheet's emits NOTHING: inherit, never restate"
+    assert theme_css({}) == "" and theme_css({"dark": {}, "light": {}}) == ""
+    assert theme_css({"dark": {"bg": "#ff00ff"}}) == "body.body--dark{--bg:#ff00ff;}", \
+        "body.body--dark carries the dark palette, exactly as tt.css orders it"
+    assert theme_css({"light": {"bg": "#ff00ff"}}) == ":root{--bg:#ff00ff;}", \
+        ":root carries the LIGHT palette - tt.css puts light in :root, not dark"
+    assert theme_css({"light": {"bg": "#ff00ff"}, "dark": {"ink": "#010203"}}) == \
+        ":root{--bg:#ff00ff;}body.body--dark{--ink:#010203;}", "light first, then dark"
+    assert theme_css({"dark": {"bg": tt_config.DEFAULTS["theme"]["dark"]["bg"],
+                               "ink": "#010203"}}) == "body.body--dark{--ink:#010203;}", \
+        "only the tokens that DIFFER are emitted; a matching sibling emits nothing"
+    for hostile in ("#fff;}body{display:none", "red", "", "url(x)", None, 0, ["#fff"]):
+        assert theme_css({"dark": {"bg": hostile}}) == "", \
+            f"{hostile!r} is not a hex colour and must never reach the stylesheet"
+    assert theme_css({"dark": {"x;}body{display:none": "#ff00ff"}}) == "", \
+        "a token NAME out of the file is matched against DEFAULTS, never interpolated"
+    with tempfile.TemporaryDirectory() as td:
+        p = Path(td) / "c.toml"
+        p.write_text("[server]\nport = 9\n")
+        assert theme_css(tt_config.load(p)["theme"]) == "", \
+            "a config with no [theme] section emits no override block at all"
+        p.write_text('[theme.dark]\nbg = "#ff00ff"\n')
+        assert theme_css(tt_config.load(p)["theme"]) == "body.body--dark{--bg:#ff00ff;}"
+        p.write_text('[theme.dark]\nbg = "#fff;}body{display:none"\n')
+        assert theme_css(tt_config.load(p)["theme"]) == "", \
+            "an invalid colour is dropped on the way in AND on the way out"
     assert ago(0, now=30) == "just now" and ago(0, now=90) == "1m ago"
     assert ago(0, now=7200) == "2h ago" and ago(0, now=200000) == "2d ago"
     assert blocks(0, 10) == ("", "░░░░░░░░░░")
@@ -628,6 +688,14 @@ def selftest():
         "exception mid-build marks a half-drawn window current forever"
     assert code.index('srow.on("click"') < code.index("container.tt_sig = sig"), \
         "same for the drawer: its signature is recorded after the tree is built"
+    assert code.index("<style>{load_css()}</style>") < code.index('theme_css(cfg["theme"])'), \
+        "the config's palette must be added AFTER tt.css: same specificity, so " \
+        "the later block is the only reason it wins"
+    assert 'port = cfg["server"]["port"] if port is None else port' in code, \
+        "the config is the DEFAULT port; an explicit --port still wins"
+    assert '"gls": "glossary" not in collapsed' in code and '"ok": "done" not in collapsed' in code, \
+        "ui.collapsed_sections names sections the way the config does; the two " \
+        "internal keys are gls and ok"
     assert "not toggles.visible" in code, \
         "_prompt's flip must toggle against the LIVE visibility - `force` and " \
         "`shown` are constants captured for the render, so a filter-forced " \
@@ -650,10 +718,18 @@ def stamp(ts):
     return datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M:%S")
 
 
-def main(port):
+def main(port=None):
     from nicegui import app, ui
 
+    # One dict, read where it is needed. A missing or malformed file yields the
+    # defaults, so nothing below has to think about that.
+    cfg = tt_config.load()
+    port = cfg["server"]["port"] if port is None else port   # an explicit --port wins
+    poll_seconds = cfg["server"]["poll_seconds"]
+
     ui.add_head_html(f"<style>{load_css()}</style>")
+    if (over := theme_css(cfg["theme"])):     # AFTER tt.css, or it overrides nothing
+        ui.add_head_html(f"<style>{over}</style>")
     ui.add_head_html(COPY_JS)
     ui.add_head_html(TAB_TITLE_JS)
     ui.add_head_html(TOAST_JS)
@@ -671,7 +747,7 @@ def main(port):
         app.storage.general[f"tt.{key}"] = value
 
     dark = ui.dark_mode()
-    mode = store("theme", "system")
+    mode = store("theme", cfg["theme"]["default"])
     if mode not in THEME_MODES:  # a hand-edited/stale storage value must not crash startup
         mode = "system"
 
@@ -724,7 +800,9 @@ def main(port):
                 # "nothing matched" and "your match is 600 px below" look identical.
                 with ui.element("div").classes("dw-find"):
                     search = ui.input(placeholder="filter").props(
-                        "clearable dense borderless debounce=100").classes("dw-in")
+                        "clearable dense borderless").classes("dw-in")
+                    # dict form, never the props STRING: see build_window
+                    search.props["debounce"] = cfg["ui"]["filter_debounce_ms"]
                     hits = ui.label("").classes("dw-count")
                     theme_btn = ui.element("button").classes("dw-theme")
                     with theme_btn:
@@ -741,7 +819,7 @@ def main(port):
                 ui.label("table-talk")
             cadence = ui.element("div").classes("sl-s")
             with cadence:
-                ui.label("Every 2.0s · last")
+                ui.label(f"Every {poll_seconds}s · last")
                 last_stamp = ui.label("--:--:--")
             # id, not a class: TAB_TITLE_JS and TOAST_JS both getElementById this
             # and hang a MutationObserver on it. Keep the id if you move it.
@@ -949,7 +1027,7 @@ def main(port):
             if (key := target()):
                 on_window_action(key, what)
         elif what == "drawer":
-            put("drawer_open", not store("drawer_open", True))
+            put("drawer_open", not store("drawer_open", cfg["ui"]["drawer_open"]))
             tick()
         elif what == "sort":
             cycle_sort()
@@ -1046,7 +1124,7 @@ def main(port):
                       for g in groups))
 
     def render_drawer(container, groups):
-        collapsed = not store("drawer_open", True)
+        collapsed = not store("drawer_open", cfg["ui"]["drawer_open"])
         sig = drawer_sig(groups, collapsed)
         if getattr(container, "tt_sig", None) == sig:
             return
@@ -1166,7 +1244,8 @@ def main(port):
         win["latest"] = summary["latest"]
         win["when"].props.set_optional(
             "title", stamp(summary["latest"]) if summary["latest"] else None)
-        render_window_body(win["body"], state, newest, query, changed)
+        render_window_body(win["body"], state, newest, query, changed,
+                           cfg["ui"]["collapsed_sections"])
 
     def repack(visible, cols, weights):
         """Move existing windows into freshly sized columns. move() preserves
@@ -1228,8 +1307,10 @@ def main(port):
         if zoomed in windows:
             visible = [zoomed]
         on_wall = visible
-        drawer_open = store("drawer_open", True)
-        cols = 1 if zoomed in windows else store("cols", 0) or default_cols(WALL_WIDTH)
+        drawer_open = store("drawer_open", cfg["ui"]["drawer_open"])
+        # ui.columns is 0 = auto, which is exactly what `or` reads as
+        cols = (1 if zoomed in windows
+                else store("cols", cfg["ui"]["columns"]) or default_cols(WALL_WIDTH))
         key = layout_key(visible, cols, marks, folds, zoomed, scope, sort, drawer_open)
         if key != layout:
             layout = key
@@ -1339,13 +1420,14 @@ def main(port):
 
     tick()
     # fold_cached re-parses only changed files; steady-state tick is O(files stat)
-    ui.timer(2.0, tick)
+    ui.timer(poll_seconds, tick)
     ui.run(host="127.0.0.1", port=port, show=False, reload=False, title="table-talk", favicon="🗣")
 
 
 if __name__ in {"__main__", "__mp_main__"}:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--port", type=int, default=8731)
+    # no default: unset means "whatever the config says", and main() resolves it
+    ap.add_argument("--port", type=int)
     ap.add_argument("--selftest", action="store_true")
     a = ap.parse_args()
     if a.selftest:

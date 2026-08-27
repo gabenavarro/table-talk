@@ -141,7 +141,10 @@ def cmd_serve(port):
     uv = shutil.which("uv")
     if not uv:
         sys.exit("error: uv not found on PATH - install from https://docs.astral.sh/uv/")
-    os.execv(uv, [uv, "run", "--script", str(dash), "--port", str(port)])
+    # --port is passed ONLY when it was given: unset, the dashboard reads
+    # server.port out of the config, and forwarding a default here would beat it.
+    argv = [uv, "run", "--script", str(dash)] + (["--port", str(port)] if port else [])
+    os.execv(uv, argv)
 
 
 def selftest():
@@ -230,7 +233,7 @@ def main():
     sh.add_argument("project", nargs="?")
 
     sv = sub.add_parser("serve", help="launch the dashboard")
-    sv.add_argument("--port", type=int, default=8731)
+    sv.add_argument("--port", type=int, help="default: server.port from the config (8731)")
 
     args = p.parse_args()
     if args.selftest:
