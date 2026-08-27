@@ -101,6 +101,39 @@ def tally_text(open_actions, open_tasks):
     return "  ".join(parts) if parts else "all clear"
 
 
+# Blur a button the moment it is clicked. ui.keyboard ignores every keystroke
+# while document.activeElement is an input/select/button/textarea (verified in
+# keyboard.js), and every control here - drawer rows, window M/Z/▾, statusline
+# chips - is a <button>. Without this, one click on any of them silently kills
+# the whole keyboard layer until you click elsewhere.
+BLUR_JS = """<script>
+document.addEventListener('click', e => {
+  const b = e.target.closest && e.target.closest('button');
+  if (b) b.blur();
+});
+</script>"""
+
+# Every key the page binds. The statusline chips are built from this same dict
+# and dispatch through the same handler, so a key can never do something no
+# click can.
+KEYMAP = {"\\": "drawer", "m": "mark", "z": "zoom", "f": "fold",
+          "s": "sort", "/": "filter", "!": "needs-me", "?": "keys",
+          "Escape": "unzoom"}
+
+
+def next_sort(mode):
+    """Cycle recent -> actions -> project -> recent."""
+    order = M.SORTS
+    return order[(order.index(mode) + 1) % len(order)] if mode in order else order[0]
+
+
+def toggle(s, item):
+    """Set membership toggle, returning a new set so callers can compare."""
+    out = set(s)
+    out.discard(item) if item in out else out.add(item)
+    return out
+
+
 THEME_MODES = ("system", "light", "dark")
 # Glyphs, not Quasar icon names: the shell is a terminal costume and the only
 # button styling left in the sheet is the statusline's.
@@ -434,6 +467,24 @@ def selftest():
         "set_visibility appends the CLASS 'hidden'; a [hidden] attribute rule would never match"
     assert "width:100%" in css.split(".tt-app{")[1].split("}")[0], \
         "the shell must be pinned to the viewport, or nowrap statusline segments widen the page"
+    assert KEYMAP == {"\\": "drawer", "m": "mark", "z": "zoom", "f": "fold",
+                      "s": "sort", "/": "filter", "!": "needs-me", "?": "keys",
+                      "Escape": "unzoom"}
+    assert next_sort("recent") == "actions"
+    assert next_sort("actions") == "project"
+    assert next_sort("project") == "recent"
+    assert next_sort("nonsense") == "recent", "an unknown sort cycles back to the default"
+    assert toggle({"a"}, "a") == set() and toggle(set(), "a") == {"a"}
+    assert toggle({"a"}, "b") == {"a", "b"}
+    assert toggle({"a"}, "a") is not None and "a" in {"a"}, "toggle returns a NEW set"
+    src = {"a"}
+    toggle(src, "a")
+    assert src == {"a"}, "toggle must not mutate its argument"
+    assert ".sl-h" in css and ".tt-keys" in css, \
+        "the statusline key chips and the ? overlay both need styles"
+    assert ".win.cur" in css, "the window m/z/f act on must be visibly the current one"
+    assert "closest('button')" in BLUR_JS, \
+        "keyboard.js ignores keys while a button holds focus; clicks must blur"
     print("ok")
 
 
@@ -459,6 +510,7 @@ def main(port):
     ui.add_head_html(COPY_JS)
     ui.add_head_html(TAB_TITLE_JS)
     ui.add_head_html(TOAST_JS)
+    ui.add_head_html(BLUR_JS)
     # the app shell owns the viewport; NiceGUI's page wrapper must not pad it
     ui.query(".nicegui-content").style("padding:0;gap:0;max-width:none")
 
@@ -480,14 +532,17 @@ def main(port):
 
     apply_theme(mode)
 
-    # Layout state. marks/folds/zoomed/scope are read once and then owned by the
-    # handlers in Task 12; cols/sort/drawer_open are read per tick because a
-    # handler only has to write them for the next tick to pick them up.
+    # Layout state. marks/folds/zoomed/scope/needs_me/current are read once and
+    # then owned by the handlers below; cols/sort/drawer_open are read per tick
+    # because a handler only has to write them for the next tick to pick them up.
     marks = set(store("marks", []))
     folds = set(store("folds", []))
     groups_folded = set(store("groups_folded", []))
     zoomed = store("zoomed", None)
     scope = store("scope", None)
+    needs_me = bool(store("needs_me", False))
+    current = store("current", None)   # the window m/z/f act on
+    on_wall = []                       # what poll() last put on the wall, in order
 
     with ui.element("div").classes("tt-app"):
         shell = ui.element("div").classes("tt-main")
@@ -537,15 +592,35 @@ def main(port):
                         ui.label(str(n))
                     b.on("click", lambda _, n=n: on_cols(n))
                     col_buttons[n] = b
+            chips = {}
             with ui.element("div").classes("sl-s sl-k"):
+                # Built from KEYMAP itself, so the hints cannot drift from the
+                # bindings, and each is a BUTTON: every key needs a click
+                # equivalent. filter and unzoom are left out - the box you type
+                # in and Esc are their own affordance, and a "click to unzoom"
+                # chip would sit dead on a wall that is not zoomed.
                 # <b> with a nested label, never ui.html: exactly one ui.html is
                 # allowed on this page and _marked owns it.
-                for hotkey, what in (("\\", "drawer"), ("m", "mark"), ("z", "zoom"),
-                                     ("f", "fold"), ("?", "keys")):
-                    with ui.element("b"):
-                        ui.label(hotkey)
-                    ui.label(what)
+                for hotkey, what in KEYMAP.items():
+                    if what in ("filter", "unzoom"):
+                        continue
+                    # no title= tooltip: the chip already reads '\ drawer', and a
+                    # backslash inside a props string trips NiceGUI's parser into
+                    # compiling it as an escape ("invalid escape sequence '\)'")
+                    chips[what] = b = ui.element("button").classes("sl-h")
+                    with b:
+                        with ui.element("b"):
+                            ui.label(hotkey)
+                        ui.label(what)
+                    b.on("click", lambda _, w=what: do(w), [])
             clock = ui.label("").classes("sl-clock")
+    with ui.dialog() as keys_dlg, ui.element("div").classes("tt-keys"):
+        ui.label("keys").classes("ttl")
+        for hotkey, what in KEYMAP.items():
+            with ui.element("div").classes("k-row"):
+                with ui.element("b"):
+                    ui.label(hotkey)
+                ui.label(what)
     # Windows live here whenever they are off the wall. Parking them rather than
     # deleting them is what lets scope and zoom be reversible for free, and it is
     # what makes wall.clear() safe: clearing a column deletes what is inside it.
@@ -564,8 +639,42 @@ def main(port):
     columns = []     # the current column containers
     layout = None    # last layout_key; the wall re-packs only when this changes
 
-    def on_window_action(key, action):   # replaced in Task 12
-        pass
+    def _replace(target, new, store_key):
+        """Mutate the live set in place (the handlers close over it) and persist.
+        `new` is computed by the caller BEFORE this runs: clearing first would
+        make toggle() operate on an already-empty set and every mark would read
+        as 'not marked'."""
+        target.clear()
+        target.update(new)
+        put(store_key, sorted(target))
+
+    def on_window_action(key, action):
+        nonlocal zoomed
+        if action == "mark":
+            _replace(marks, toggle(marks, key), "marks")
+        elif action == "fold":
+            _replace(folds, toggle(folds, key), "folds")
+        elif action == "zoom":
+            zoomed = None if zoomed == key else key
+            put("zoomed", zoomed)
+        tick()
+
+    def on_pick(key):
+        """Make one window current. Re-dresses the two windows that changed
+        rather than ticking: nothing moved, so a re-pack would be a lie."""
+        nonlocal current
+        if key == current:
+            return
+        old, current = current, key
+        put("current", key)
+        for k in (old, key):
+            if k in windows:
+                dress(k, windows[k])
+
+    def target():
+        """The window m/z/f act on: the one you last touched if it is still on
+        the wall, else the first window on it. Never something you cannot see."""
+        return current if current in on_wall else (on_wall[0] if on_wall else None)
 
     def build_window(key, project):
         """Everything about a window that never changes: its project is its file's
@@ -573,6 +682,8 @@ def main(port):
         within the project, so every older sibling shifts down when a newer
         session file lands. It is set from `where` on every tick instead."""
         el = ui.element("div").classes("win").props(f'data-window="{key}"')
+        # clicking anywhere in a window makes it current, M/Z/▾ included
+        el.on("click", lambda _, k=key: on_pick(k), [])
         with el:
             with ui.element("div").classes("win-t"):
                 ui.label(project).classes("nm")
@@ -600,11 +711,35 @@ def main(port):
 
     seen_projects = set()
 
-    def on_scope(project):   # replaced in Task 12
-        pass
+    def on_scope(project):
+        """Clicking a project scopes the wall to it; clicking it again, or the ✕
+        in the statusline, clears the scope. Zoom goes with it - a zoom held
+        across a scope change points at a window that is no longer on the wall."""
+        nonlocal scope, zoomed
+        scope = None if scope == project else project
+        zoomed = None
+        put("scope", scope)
+        put("zoomed", None)
+        tick()
 
-    def on_focus(key):       # replaced in Task 12
-        pass
+    def on_focus(key):
+        """Clicking a session in the drawer scrolls its window into view. The
+        drawer lists every session, scoped or not, so anything that could be
+        hiding this one is cleared first - a click that visibly does nothing is
+        worse than a click that changes the view."""
+        nonlocal zoomed, scope, needs_me
+        on_pick(key)
+        if key not in on_wall:
+            zoomed, scope, needs_me = None, None, False
+            put("zoomed", None)
+            put("scope", None)
+            put("needs_me", False)
+            tick()
+        # rAF: the window may have only just been moved back onto the wall
+        ui.run_javascript(
+            'requestAnimationFrame(() => document.querySelector('
+            f'\'[data-window="{key}"]\')'
+            '?.scrollIntoView({behavior:"smooth",block:"start"}))')
 
     def on_cols(n):
         """cols is read from storage per tick, so writing it and re-ticking is the
@@ -612,8 +747,48 @@ def main(port):
         put("cols", n)
         tick()
 
-    def cycle_sort():        # replaced in Task 12
-        pass
+    def cycle_sort():
+        put("sort", next_sort(store("sort", "recent")))
+        tick()
+
+    def do(what):
+        """One dispatcher for the whole interaction layer. The statusline chips
+        and the keyboard both come through here, so a key can never do something
+        no click can, and the two can never drift apart."""
+        nonlocal needs_me
+        if what in ("mark", "zoom", "fold"):
+            if (key := target()):
+                on_window_action(key, what)
+        elif what == "drawer":
+            put("drawer_open", not store("drawer_open", True))
+            tick()
+        elif what == "sort":
+            cycle_sort()
+        elif what == "needs-me":
+            # not a filter: it drops windows with NOTHING open, so it cannot
+            # hide an open action however hard you squint at it
+            needs_me = not needs_me
+            put("needs_me", needs_me)
+            tick()
+        elif what == "unzoom":
+            if zoomed:
+                on_window_action(zoomed, "zoom")
+        elif what == "filter":
+            ui.run_javascript('document.querySelector(".dw-find input")?.focus()')
+        elif what == "keys":
+            keys_dlg.close() if keys_dlg.value else keys_dlg.open()
+
+    def on_key(e):
+        # ignore defaults to ['input','select','button','textarea'] and is checked
+        # against document.activeElement, so keys do not fire while the filter box
+        # has focus. Verified in both directions; BLUR_JS is what keeps a clicked
+        # button from holding that focus forever.
+        if not e.action.keydown or e.action.repeat or keys_dlg.value:
+            return
+        if (what := KEYMAP.get(e.key.name)):
+            do(what)
+
+    ui.keyboard(on_key=on_key)
 
     def meter_row(summary):
         """The badge pair and htop meter carried by every drawer row, project and
@@ -656,7 +831,10 @@ def main(port):
         """Everything the tree draws, in one comparable value. The poll runs every
         2 s and the drawer usually has nothing new to say; rebuilding it anyway
         would drop hover and keyboard focus off a row somebody is reading."""
-        return (collapsed, store("sort", "recent"), tuple(sorted(groups_folded)),
+        # `scope` is in here because the scoped row carries .dw-on: leave it out
+        # and the highlight never repaints when the scope changes, which is
+        # exactly the bug this signature is otherwise there to cause.
+        return (collapsed, scope, store("sort", "recent"), tuple(sorted(groups_folded)),
                 tuple((g["project"], g["open_actions"], g["open_tasks"], g["pct"],
                        tuple((s["key"], s["date"], s["summary"]["open_actions"],
                               s["summary"]["open_tasks"], s["summary"]["pct"],
@@ -676,7 +854,8 @@ def main(port):
                 # meter. Same click target as the full row, so scope survives the
                 # collapse rather than being a different feature at another width.
                 for g in groups:
-                    rail = ui.element("button").classes("rail-item")
+                    rail = ui.element("button").classes(
+                        "rail-item dw-on" if g["project"] == scope else "rail-item")
                     rail.props(f'data-project="{g["project"]}" title="{g["project"]}"')
                     with rail:
                         ui.label(abbrev(g["project"])).classes("rail-ab")
@@ -702,7 +881,8 @@ def main(port):
                 # a project with one session is one flat row: a group of one is noise
                 single = len(g["sessions"]) == 1
                 folded = g["project"] in groups_folded and not single
-                row = ui.element("button").classes("dw-row dw-proj")
+                row = ui.element("button").classes(
+                    "dw-row dw-proj dw-on" if g["project"] == scope else "dw-row dw-proj")
                 row.props(f'data-project="{g["project"]}"')
                 with row:
                     ui.label(GUIDES["none"] if single else
@@ -742,6 +922,8 @@ def main(port):
             cls += " marked"
         if key in folds:
             cls += " folded"
+        if key == current:
+            cls += " cur"
         win["el"].classes(replace=cls)
         win["mark"].set_visibility(key in marks)
         win["zoom"].set_visibility(key == zoomed)
@@ -777,9 +959,11 @@ def main(port):
         with wall:
             if not visible:
                 # A query can never empty the wall - it dims, it never hides - so
-                # scope is the only thing that can, and saying "no sessions yet"
+                # only scope and needs-me can, and saying "no sessions yet"
                 # while sessions plainly exist would be a lie.
-                ui.label(f"nothing under {scope} — clear the scope to see every session"
+                ui.label("nothing needs you right now — press ! to show every session"
+                         if needs_me else
+                         f"nothing under {scope} — clear the scope to see every session"
                          if scope else
                          "no sessions yet — record something with table-talk").classes("tt-none")
             for _ in buckets:
@@ -790,10 +974,11 @@ def main(port):
                 dress(key, windows[key])
 
     def poll():
-        nonlocal layout
+        nonlocal layout, on_wall
         states = {p.stem: fold_cached(p) for p in sorted(DATA_DIR.glob("*.jsonl"), reverse=True)}
         groups = M.group_sessions(list(states.items()))
         where = {s["key"]: (g["project"], s["index"]) for g in groups for s in g["sessions"]}
+        opens = {s["key"]: s["summary"]["open_actions"] for g in groups for s in g["sessions"]}
         sort = store("sort", "recent")
         # the wall has no sort of its own: it reads in the drawer's order
         ordered = M.sort_groups(groups, sort)
@@ -809,18 +994,27 @@ def main(port):
                 with attic:
                     windows[key] = build_window(key, where[key][0])
 
-        # Scope and zoom choose what is on the wall. The query never does: the
-        # filter dims, it never hides, so an open action cannot leave the wall.
+        # Scope, needs-me and zoom choose what is on the wall - all three are
+        # explicit, user-initiated choices about the view. The query never does:
+        # the filter dims, it never hides, so an open action cannot leave the
+        # wall. needs-me only ever drops windows with nothing open, so it cannot
+        # remove an open action either.
         visible = [k for k in order if scope in (None, where[k][0])]
+        if needs_me:
+            visible = [k for k in visible if opens[k]]
         if zoomed in windows:
             visible = [zoomed]
+        on_wall = visible
         drawer_open = store("drawer_open", True)
         cols = 1 if zoomed in windows else store("cols", 0) or default_cols(WALL_WIDTH)
         key = layout_key(visible, cols, marks, folds, zoomed, scope, sort, drawer_open)
         if key != layout:
             layout = key
             shell.classes(replace="tt-main" if drawer_open else "tt-main tt-collapsed")
-            repack(visible, cols, {k: M.weight(v) for k, v in states.items()})
+            # a folded window is a titlebar: costing it its full content weight
+            # would leave the packer balancing around height that is not drawn
+            repack(visible, cols,
+                   {k: 1 if k in folds else M.weight(v) for k, v in states.items()})
 
         query = (search.value or "").strip()
         # exactly one cursor on the page: the newest open action anywhere on the wall
@@ -863,6 +1057,8 @@ def main(port):
             scope_label.set_text(f"showing {scope} only")
         for n, b in col_buttons.items():     # the EFFECTIVE count: zoom forces 1
             b.classes(replace="sl-c on" if n == cols else "sl-c")
+        # the only chip with a state worth showing: the others are momentary
+        chips["needs-me"].classes(replace="sl-h on" if needs_me else "sl-h")
 
     spin_i = 0
 
