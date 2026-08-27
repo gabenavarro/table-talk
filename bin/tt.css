@@ -289,15 +289,14 @@ body{background:var(--bg);color:var(--ink);margin:0}
    ground could (in system mode the server cannot know the client's answer).
    The font is NOT set here: mermaid measures labels with its configured
    font, so it rides the init directive instead (see MERMAID_INIT).
-   Coverage is the flowchart + sequence primitives the skill steers toward,
-   SCOPED to their own classes - never a blanket text/span rule. Base is not
-   grey: its fills are cream and its loose text is #333, so an unthemed type
-   (pie, gantt) reads poorly in dark whatever we do here - a blanket rule
-   only moves the problem, forcing --ink onto those cream fills. The skill
-   steers to flowchart TD. Sequence label FONTS stay mermaid's own -
-   actorFontFamily and
-   friends are per-diagram config, not theme variables; accepted, the skill
-   steers to flowchart TD. useMaxWidth caps the SVG at 100% of this box. */
+   Coverage is the flowchart + sequence primitives, SCOPED to their own
+   classes - never a blanket text/span rule. Base is not grey: its fills are
+   cream and its loose text is #333, so an unthemed type (pie, gantt) reads
+   poorly in dark whatever we do here, and a blanket rule only moves the
+   problem by forcing --ink onto those cream fills. Sequence label FONTS
+   stay mermaid's own: actorFontFamily and friends are per-diagram config,
+   not theme variables. Both are accepted - the skill steers to flowchart
+   TD. useMaxWidth caps the SVG at 100% of this box. */
 .mmd{padding:2px 0}
 .mmd svg{display:block;background:transparent}
 .mmd .node rect,.mmd .node circle,.mmd .node ellipse,.mmd .node polygon,
