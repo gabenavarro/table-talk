@@ -245,20 +245,25 @@ def selftest():
         assert session_code({}) == "", "no session id, no stamp"
         assert session_code({"CLAUDE_CODE_SESSION_ID": "9f3c8a1e-dead"}) == "9f3c", \
             "four chars is enough to tell sessions apart and fits the id column"
+        prev = os.environ.get("CLAUDE_CODE_SESSION_ID")
         os.environ["CLAUDE_CODE_SESSION_ID"] = "abcd1234-x"
         try:
             i5 = add_event("proj", {"type": "task", "status": "open", "what": "s"})
             assert fold(session_file("proj"))[i5]["sid"] == "abcd"
         finally:
-            del os.environ["CLAUDE_CODE_SESSION_ID"]
+            if prev is None:
+                os.environ.pop("CLAUDE_CODE_SESSION_ID", None)
+            else:
+                os.environ["CLAUDE_CODE_SESSION_ID"] = prev
         # new_id must avoid ids used in ANY file, not just one
         other = session_file("other")
         append(other, {"id": "d00d", "type": "task", "what": "y", "ts": 1})
         orig = secrets.token_hex
-        draws = iter(["d00d", "beef"])
+        free = next(x for x in ("beef", "b33f", "f00d", "c0de") if x not in all_ids())
+        draws = iter(["d00d", free])
         secrets.token_hex = lambda n=2: next(draws)
         try:
-            assert new_id() == "beef", "new_id must skip an id used in any file"
+            assert new_id() == free, "new_id must skip an id used in any file"
         finally:
             secrets.token_hex = orig
         assert safe_project("a/b") == "a_b" and safe_project("x") == "x", "project separators sanitized"

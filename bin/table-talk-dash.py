@@ -737,7 +737,7 @@ def session_label(state, index):
     best, code = -1, ""
     for ev in state.values():
         if ev.get("sid") and ev.get("ts", 0) > best:
-            best, code = ev["ts"], str(ev["sid"])
+            best, code = ev.get("ts", 0), str(ev["sid"])
     return code or str(index)
 
 
@@ -787,6 +787,9 @@ def selftest():
     assert session_label({"a": {"id": "a", "ts": 1}}, 3) == "3", \
         "a file recorded before session stamping keeps its tmux index"
     assert session_label({}, 0) == "0"
+    assert session_label({"a": {"id": "a", "sid": "beef"}}, 7) == "beef", \
+        "a hand-edited line with a sid and no ts must not raise: poll() calls " \
+        "this per window with no guard, so one bad line stops the whole wall"
     assert _dim(st["a"], "") == "" and _dim(st["a"], "  ") == "", "an empty query dims nothing"
     assert _dim(st["a"], "BG") == "", "a matching row is not dimmed, and matching ignores case"
     assert _dim(st["a"], "kubernetes") == " tt-dim", "a non-matching row dims — it never hides"
