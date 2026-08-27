@@ -180,6 +180,8 @@ def weight(state):
     """
     units = 1
     for ev in state.values():
+        if ev.get("type") in ("action", "task") and ev.get("diagram"):
+            units += 1 + str(ev["diagram"]).count("\n") // 2
         if ev.get("status") == "done":
             continue
         typ = ev.get("type")
@@ -191,8 +193,6 @@ def weight(state):
             units += 2 + (1 if ev.get("intuitive") else 0)
         elif typ == "diagram":
             units += 6      # rendered SVG: roughly an action's height, plus room
-        if typ in ("action", "task") and ev.get("diagram"):
-            units += 1 + str(ev["diagram"]).count("\n") // 2
     return units
 
 
@@ -555,7 +555,8 @@ def selftest():
     assert weight(art_task) == weight(plain_task) + 2, \
         "a 4-line sketch costs the packer 1 + lines//2 units - it is real height"
     assert weight({"a": {"type": "action", "status": "done", "diagram": "x\ny",
-                         "ts": 1}}) == 1, "a done item's sketch is collapsed with it"
+                         "ts": 1}}) == 2, \
+        "a done item still DRAWS its sketch, so it still costs the packer height"
     assert "flow" in row_text({"id": "x", "type": "task", "diagram": "a->flow"}), \
         "the filter must see a sketch's labels"
 
