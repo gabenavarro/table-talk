@@ -337,10 +337,22 @@ body{background:var(--bg);color:var(--ink);margin:0}
    widening the card. Only the theme's own inks: structure strokes recede to
    --ink-3 so the labels read first, and a config palette override recolours
    the art with everything else. */
-.art{justify-self:center;min-width:0;max-width:100%;overflow-x:auto;
+/* The panel BELONGS to the tree: it stretches across its row and starts on the
+   same left edge as every other sub-row's content, so the guide's arm lands on
+   it and it reads as the last child of the item rather than a card dropped in
+   the middle of one. Drawn with a border rather than glyphs precisely because
+   the guide beside it is drawn that way too - a frame in characters can only
+   be as wide as the art, which is what made it float.
+   text-align centres the art inside a full-width panel; .art-in restores left
+   alignment, or white-space:pre would centre every LINE on its own and shear
+   the drawing apart. */
+.art{justify-self:stretch;min-width:0;max-width:100%;overflow-x:auto;
+  border:1px solid var(--rule);border-radius:2px;padding:5px 7px;
+  background:color-mix(in srgb,var(--surface-2) 55%,transparent);
   font-family:var(--mono);font-size:11px;line-height:1.3;white-space:pre;
-  color:var(--ink)}
-.art>*{display:inline}
+  color:var(--ink);text-align:center}
+.art-in{display:inline-block;text-align:left}
+.art-in>*{display:inline}
 .art .st{color:var(--ink-3)}
 
 /* ---- statusline ---- */
