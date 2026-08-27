@@ -58,7 +58,8 @@ def _merge(default, override, path=""):
             print(f"warning: config {where}: {ov!r} is not a hex colour, using default",
                   file=sys.stderr)
             out[key] = dv
-        elif not isinstance(ov, type(dv)) and not (isinstance(dv, float) and isinstance(ov, int)):
+        elif (isinstance(ov, bool) and not isinstance(dv, bool)) or (
+                not isinstance(ov, type(dv)) and not (isinstance(dv, float) and isinstance(ov, int))):
             print(f"warning: config {where}: expected {type(dv).__name__}, using default",
                   file=sys.stderr)
             out[key] = dv
@@ -90,6 +91,7 @@ def selftest():
     assert not valid_colour("#12345"), "not a legal hex length"
     assert not valid_colour('#fff;}body{display:none'), "a css injection attempt is not a colour"
     assert not valid_colour(None) and not valid_colour(123)
+    assert not valid_colour("#fff\n"), "Python's $ matches before a trailing newline; \\Z must not"
 
     with tempfile.TemporaryDirectory() as td:
         missing = Path(td) / "nope.toml"
@@ -122,6 +124,11 @@ def selftest():
         wrong.write_text('[server]\nport = "not a number"\n')
         assert load(wrong)["server"]["port"] == DEFAULTS["server"]["port"], \
             "a wrongly-typed value falls back to its default"
+
+        boolean = Path(td) / "bool.toml"
+        boolean.write_text('[server]\nport = true\n')
+        assert load(boolean)["server"]["port"] == DEFAULTS["server"]["port"], \
+            "a bool must not silently satisfy an int/float default"
 
         extra = Path(td) / "extra.toml"
         extra.write_text('[nonsense]\nkey = 1\n')

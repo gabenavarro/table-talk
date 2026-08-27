@@ -276,7 +276,10 @@ def path_spans(text, roots):
     check so a symlink cannot escape, and traversal (`..`) collapses first.
 
     Paths containing spaces are not detected. That is an accepted limit - the
-    alternative is guessing where a filename ends inside a sentence.
+    alternative is guessing where a filename ends inside a sentence. A trailing
+    ':LINE' as in 'path/to/file.py:42' is swallowed into the token and so fails
+    to resolve too - also accepted, since stripping it would break absolute
+    Windows-style paths.
     """
     if not text:
         return []
@@ -506,6 +509,7 @@ def selftest():
         assert spans(f"{real}.") == [str(real)], "a trailing sentence period is not part of the path"
         assert spans("no paths here at all") == []
         assert spans("") == [] and spans(None) == []
+        assert spans(str(root / "docs")) == [], "a directory must not be returned as linkable"
 
         link = root / "link.md"
         link.symlink_to(outside)
