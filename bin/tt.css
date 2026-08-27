@@ -288,25 +288,35 @@ body{background:var(--bg);color:var(--ink);margin:0}
    tokens is what makes a diagram follow light/dark live, which no baked
    ground could (in system mode the server cannot know the client's answer).
    The font is NOT set here: mermaid measures labels with its configured
-   font, so it rides the init directive instead (see MERMAID_INIT). Coverage
-   is the flowchart + sequence primitives; a diagram type beyond those keeps
-   mermaid's base greys, which sit close enough to the dark palette to pass.
-   mermaid's own useMaxWidth caps the SVG at 100% of this box. */
+   font, so it rides the init directive instead (see MERMAID_INIT).
+   Coverage is the flowchart + sequence primitives the skill steers toward,
+   SCOPED to their own classes - never a blanket text/span rule: base is not
+   grey (its fills are cream), so an unthemed type (pie, gantt) keeps
+   mermaid's own light card whole rather than getting --ink text forced onto
+   cream. Sequence label FONTS stay mermaid's own - actorFontFamily and
+   friends are per-diagram config, not theme variables; accepted, the skill
+   steers to flowchart TD. useMaxWidth caps the SVG at 100% of this box. */
 .mmd{padding:2px 0}
 .mmd svg{display:block;background:transparent}
 .mmd .node rect,.mmd .node circle,.mmd .node ellipse,.mmd .node polygon,
 .mmd .node path{fill:var(--surface-2)!important;stroke:var(--ink-3)!important}
-.mmd .nodeLabel,.mmd .label,.mmd text,.mmd p,.mmd span{
+.mmd .nodeLabel,.mmd .nodeLabel p,.mmd .label,.mmd .cluster text{
   color:var(--ink)!important;fill:var(--ink)!important}
 .mmd .edgePath path,.mmd .flowchart-link{stroke:var(--ink-2)!important}
 .mmd .marker{fill:var(--ink-2)!important;stroke:var(--ink-2)!important}
 .mmd .edgeLabel,.mmd .edgeLabel p{background:var(--surface)!important;
   color:var(--ink-2)!important}
 .mmd .cluster rect{fill:var(--surface)!important;stroke:var(--rule)!important}
-.mmd .actor{fill:var(--surface-2)!important;stroke:var(--ink-3)!important}
+/* .actor sits on BOTH the box rect and the name text - rect-scoped, or the
+   name paints surface-on-surface. The tspan rules are DIRECT on purpose:
+   mermaid styles these tspans directly (fill:#333), and a direct rule beats
+   one that only inherits, whatever the importance. */
+.mmd rect.actor{fill:var(--surface-2)!important;stroke:var(--ink-3)!important}
 .mmd .actor-line{stroke:var(--ink-3)!important}
 .mmd .messageLine0,.mmd .messageLine1{stroke:var(--ink-2)!important}
-.mmd .messageText{fill:var(--ink)!important;stroke:none!important}
+.mmd .messageText,.mmd .messageText>tspan,.mmd text.actor>tspan,
+.mmd .labelText>tspan,.mmd .loopText>tspan,.mmd .noteText>tspan{
+  fill:var(--ink)!important;stroke:none!important}
 
 /* the item's ASCII sketch: one guided sub-row like why/rec, centered in the
    card per the spec. white-space:pre keeps the art's own geometry - the row's

@@ -255,8 +255,13 @@ GUIDES = {"open": "▾", "closed": "▸", "mid": "├", "last": "└", "line": "
 # A per-render directive rather than initialize() config: it travels with
 # each render, per diagram. securityLevel cannot be relaxed the same way -
 # mermaid's directive sanitiser blocks it - so strict stays strict.
+# The same sanitiser runs every themeVariables VALUE through
+# ^[\d "#%(),.;A-Za-z]+$ - NO hyphen - and one bad character blanks the
+# WHOLE value: with ui-monospace in this stack, fontFamily came out "",
+# labels were measured in the page font and every box mis-sized. Verified
+# against the bundled mermaid 11.16.1; the selftest pins hyphen-freedom.
 MERMAID_INIT = ('%%{init: {"theme": "base", "themeVariables": {"fontFamily": '
-                '"JetBrains Mono, Adwaita Mono, ui-monospace, Menlo, monospace", '
+                '"JetBrains Mono, Adwaita Mono, SF Mono, Menlo, Consolas, monospace", '
                 '"fontSize": "12px"}}}%%\n')
 
 MAX_CELLS = 20     # a long session must not wreck the footer line
@@ -1080,12 +1085,23 @@ def selftest():
     assert '"theme": "neutral"' not in code and "background:#fff" not in css, \
         "the white neutral card is gone: the sheet's token overrides now theme " \
         "the diagram, and they swap with the palette where a baked ground cannot"
-    assert ".mmd .node rect" in css and css.count("var(--surface-2)!important"), \
+    assert ".mmd .node rect" in css and "var(--surface-2)!important" in css, \
         "mermaid inlines its own stylesheet per SVG; only author !important " \
         "rules keyed on the THEME TOKENS re-dress it and follow light/dark live"
-    assert ".mmd .edgeLabel" in css and ".mmd .marker" in css and ".mmd .actor" in css, \
+    assert ".mmd .edgeLabel" in css and ".mmd .marker" in css and ".mmd rect.actor" in css, \
         "edges, edge labels, arrowheads and sequence actors are the pieces that " \
-        "stayed default-grey when only the nodes were themed"
+        "stayed default-grey when only the nodes were themed - and .actor must " \
+        "be RECT-scoped: the class also sits on the name text"
+    assert ".mmd text.actor>tspan" in css and ".mmd .noteText>tspan" in css, \
+        "mermaid fills these tspans DIRECTLY (#333); only a direct rule beats " \
+        "a direct rule - near-black names on a dark actor box otherwise"
+    assert ".mmd text{" not in css and ".mmd span" not in css and ".mmd p" not in css, \
+        "no blanket text rule: base's fills are cream, and forcing --ink onto " \
+        "an untouched diagram type (pie, gantt) is light ink on cream in dark"
+    assert "-" not in MERMAID_INIT, \
+        "mermaid's directive sanitiser allows ^[\\d \"#%(),.;A-Za-z]+$ per " \
+        "themeVariables value - NO hyphen. ui-monospace blanked the whole " \
+        "fontFamily: measured in the page font, drawn in mono, every box wrong"
     assert '"dia": "diagrams" not in collapsed' in code, \
         "diagrams exist to be LOOKED at - the reply points the user here - so " \
         "unlike glossary/done they start open unless the config folds them"
