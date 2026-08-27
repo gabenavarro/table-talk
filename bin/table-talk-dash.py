@@ -531,13 +531,16 @@ def _art_sub(ev):
     ui.label runs split by tt_model.art_spans - structure strokes in the
     faint ink, labels in the full ink - never as markup: the art comes out
     of a LOG FILE, and a label's text binding cannot become HTML."""
-    art = M.boxed(ev.get("diagram"))
+    art = ev.get("diagram")
     if not art:
         return
     from nicegui import ui
     with ui.element("div").classes("sub"):
         ui.label("art").classes("lb")
-        with ui.element("div").classes("art"):
+        # .art is the panel and stretches; .art-in is the drawing and shrinks to
+        # fit, which is what lets a full-width panel hold centred art without
+        # centring each LINE of it separately
+        with ui.element("div").classes("art"), ui.element("div").classes("art-in"):
             for chunk, structure in M.art_spans(art):
                 lbl = ui.label(chunk)
                 if structure:
@@ -1210,10 +1213,13 @@ def selftest():
     assert '("action", "task", "term", "diagram")' in code, \
         "the statusline tally must count diagram rows: the filter highlights " \
         "them, and '0/N rows match' beside a visibly matching row is a lie"
-    assert "M.boxed(ev.get(\"diagram\"))" in code, \
-        "the sketch is FRAMED before it is split: the frame is drawn in glyphs " \
-        "so it sits on the same fixed-width grid as the art it holds, which a " \
-        "CSS border could never do"
+    art_rule = css.split(".art{")[1].split("}")[0]
+    assert "justify-self:stretch" in art_rule and "border:" in art_rule, \
+        "the sketch panel belongs to the tree: it spans its row so the guide's " \
+        "arm lands on it. Centred and shrink-wrapped it read as a separate card"
+    assert "text-align:center" in art_rule and ".art-in{display:inline-block" in css, \
+        "a full-width panel centres its art through an inline-block child: " \
+        "text-align alone would centre every LINE and shear the drawing apart"
     assert "M.art_spans" in code, \
         "art is split by the property-tested model classifier and rendered as " \
         "label runs - never raw, never markup: it comes out of a LOG FILE"
@@ -1242,15 +1248,15 @@ def selftest():
         "a diagram title shares the row grid with 4-hex ids: without its own " \
         "wider column it overflows the 42px id track (same bug .id-gls had)"
     art = css.split(".art{")[1].split("}")[0]
-    assert "white-space:pre" in art and "justify-self:center" in art, \
-        "a sketch keeps its own geometry (the row's overflow-wrap:anywhere " \
-        "must not fold a box border) and sits CENTERED in the card - the spec"
+    assert "white-space:pre" in art, \
+        "a sketch keeps its own geometry: the row's overflow-wrap:anywhere " \
+        "must never fold a drawing's line"
     assert "max-width:100%" in art and "overflow-x:auto" in art and "min-width:0" in art, \
         "art wider than the narrowest card scrolls inside its own box - it " \
         "must never widen the card"
     assert "var(--mono)" in art, \
         ".sub switched to the prose face; art must restate mono or misalign"
-    assert ".art>*{display:inline}" in css, \
+    assert ".art-in>*{display:inline}" in css, \
         "every glyph the renderer emits is a div - the .blocks trap again"
     assert ".art .st" in css, \
         "structure strokes recede to the faint ink so the labels read first"
