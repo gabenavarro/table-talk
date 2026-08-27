@@ -518,6 +518,10 @@ def selftest():
     assert ".win.cur" in css and ".fl-c" in css, \
         "the window m/z/f act on carries the spec's * flag, not CSS alone"
     assert ".dw-fold" in css, "the drawer triangle is a control and must look like one"
+    assert ".win-b .row:has(.id-gls)" in css and ".id-gls{min-width:0" in css, \
+        "a glossary term shares the row grid with 4-hex ids: without its own wider " \
+        "column AND min-width:0, a real term ('reverse complement') spills out of " \
+        "the 42px id track and overprints the definition beside it"
     assert "closest('button')" in BLUR_JS, \
         "keyboard.js ignores keys while a button holds focus; clicks must blur"
     assert "e.detail" in BLUR_JS, \

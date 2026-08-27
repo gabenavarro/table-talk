@@ -194,6 +194,17 @@ body{background:var(--bg);color:var(--ink);margin:0}
 .id:hover,.id:focus-visible{color:var(--caret);outline:none}
 .id.copied{color:var(--ok)}
 .id-act{color:var(--act)} .id-job{color:var(--job)} .id-gls{color:var(--gls)}
+/* A glossary term is not a 4-hex id. It shares the row grid with action and job
+   ids, whose 42px track fits four chars exactly - so a real term ("window
+   flags", "reverse complement") overflowed its own cell and overprinted the
+   definition beside it, both illegible at the junction.
+   min-width:0 is the load-bearing half: a grid item defaults to min-width:auto,
+   which is its MIN-CONTENT width, and that happily exceeds a fixed track and
+   spills. overflow-wrap then breaks a single long word instead of letting it
+   set an unreachable min-content floor. Scoped by :has so the id columns keep
+   their 42px and a 4-hex id can never wrap. */
+.win-b .row:has(.id-gls){grid-template-columns:96px 1fr}
+.id-gls{min-width:0;overflow-wrap:break-word}
 
 /* ---- statusline ---- */
 .sl{display:flex;align-items:center;background:var(--surface-2);border-top:1px solid var(--rule);
