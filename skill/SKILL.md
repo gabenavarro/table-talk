@@ -110,6 +110,13 @@ scales down until its labels are unreadable.
 **🔴 Actions needed from you**
 | ID | What I need | Why it matters | Recommendation |
 
+Every OPEN action, not just the ones recorded this reply. An action stays in
+this table until it is `done`, however many replies that takes — the dashboard
+keeps showing it, and a table that quietly drops it is the one place the two
+disagree. Check before writing the tables rather than trusting memory:
+
+    table-talk show | grep -c '"status": "open"'
+
 **🔵 Background work**
 | ID | What | Progress |
 
@@ -123,6 +130,8 @@ technical = the precise definition, jargon spelled out.
 ## Responding to the user
 
 - They reference rows by ID ("a3f9: go with 2"). Act on that item, then `table-talk done a3f9`.
+- Record whole URLs, never a bare `#117`: the dashboard makes an http(s) URL a
+  button and cannot guess which repository a `#ref` belongs to.
 - IDs are 4 hex chars, printed by the CLI — never invent one; always use the printed value.
 - At session start, if the dashboard is down (check below), mention `table-talk serve` once — never run it yourself.
 

@@ -403,6 +403,38 @@ def open_path(path, cfg, run=subprocess.Popen, extra_roots=()):
         print(f"table-talk: could not open {path!r}: {e}", file=sys.stderr)
 
 
+def open_url(url, cfg, run=subprocess.Popen):
+    """Open one http(s) URL in the configured command.
+
+    Re-validated HERE for the same reason open_path re-derives confinement: the
+    string arrives from a click on markup built out of a log file, so it goes
+    back through the same gate it was rendered through, and only a string that
+    is exactly its own whole match survives. That gate names http and https,
+    which is what keeps file:// and javascript: away from the launcher.
+
+    argv list, never shell=True - the same rule the file opener follows.
+    """
+    if not isinstance(url, str) or M.url_spans(url) != [(0, len(url), url)]:
+        return
+    try:
+        run([cfg["links"]["open_command"], url])
+    except OSError as e:
+        print(f"table-talk: could not open {url!r}: {e}", file=sys.stderr)
+
+
+def link_spans(text):
+    """Every clickable run in one cell as (start, end, target, is_url), in order.
+
+    URLs win where the two kinds overlap: a URL is full of slashes, so
+    _PATHISH matches it too, and only the URL half knows what to do with it.
+    """
+    urls = [(s, e, t, True) for s, e, t in M.url_spans(text)]
+    taken = [(s, e) for s, e, _, _ in urls]
+    paths = [(s, e, t, False) for s, e, t in M.path_spans(text, link_roots(CFG))
+             if not any(s < ue and us < e for us, ue in taken)]
+    return sorted(urls + paths)
+
+
 def nearest_claude_md(start, home):
     """The closest CLAUDE.md found walking up from `start`, or None.
 
@@ -442,21 +474,22 @@ def _cell(text, query, cls=None):
     """
     from nicegui import ui
     text = text or ""
-    spans = M.path_spans(text, link_roots(CFG))
+    spans = link_spans(text)
     if not spans:
         return _marked(text, query, cls)
     box = ui.element("span").classes(f"lk-p {cls}" if cls else "lk-p")
     with box:
         i = 0
-        for start, end, resolved in spans:
+        for start, end, target, is_url in spans:
             if start > i:
                 _marked(text[i:start], query)
             btn = ui.element("button").classes("lk")
-            btn.props["data-path"] = resolved
-            btn.props["title"] = f"open {resolved}"
+            btn.props["data-path"] = target
+            btn.props["title"] = f"open {target}"
             with btn:
                 _marked(text[start:end], query)
-            btn.on("click", lambda _, p=resolved: open_path(p, CFG))
+            btn.on("click", (lambda _, u=target: open_url(u, CFG)) if is_url
+                   else (lambda _, p=target: open_path(p, CFG)))
             i = end
         if i < len(text):
             _marked(text[i:], query)
@@ -1070,6 +1103,18 @@ def selftest():
             raise FileNotFoundError(cmd[0])
 
         open_path(str(real), cfg, boom)   # an open_command that is not installed is not a crash
+
+        # open_url: the same gate, on the way out, for the other kind of link
+        argv.clear()
+        pr = "https://github.com/gabenavarro/table-talk/pull/117"
+        open_url(pr, cfg, run)
+        assert argv == [["ed", pr]], "an http(s) URL opens with a two-element argv"
+        argv.clear()
+        for hostile in ("file:///etc/passwd", "javascript:alert(1)", f"{pr} ; rm -rf /",
+                        f"x{pr}", f"{pr}\x00", "", None, "PR #117", "https://"):
+            open_url(hostile, cfg, run)
+            assert argv == [], f"{hostile!r} must never reach the launcher"
+        open_url(pr, cfg, boom)           # a launcher that is not installed is not a crash
     assert ".lk-p" in css and ".lk{" in css, \
         "a link run needs its styles, and the inline rule is what keeps a cell one sentence"
 
@@ -1129,8 +1174,8 @@ def selftest():
         "never reaches the DOM and click-to-scroll has nothing to find"
     assert 'btn.props["data-id"] = str(ev["id"])' in code, \
         "the id button's data-id prop must be ASSIGNED; COPY_JS reads it"
-    assert 'btn.props["data-path"] = resolved' in code, \
-        "the link button's path must be ASSIGNED too - a .props() string is parsed"
+    assert 'btn.props["data-path"] = target' in code, \
+        "the link button's target must be ASSIGNED too - a .props() string is parsed"
     assert 'cur.props["title"]' in code and "newest action waiting on you" in code, \
         "the cursor glyph must explain itself: a green blinking box with no " \
         "tooltip reads as a rendering artifact (it was circled in a bug report)"

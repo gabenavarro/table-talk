@@ -321,6 +321,33 @@ def marked(text, q):
                    for c, hit in parts(text, q))
 
 
+# The lookbehind is load-bearing: unanchored, this matches the TAIL of a token
+# ('xhttps://y/z' linked 'https://y/z'), and what it matches becomes a button
+# handed to a process launcher.
+_URL = re.compile(r"(?<![\w.-])https?://[^\s'\"<>()\[\]\x00-\x1f\x7f]+")
+
+
+def url_spans(text):
+    """Non-overlapping (start, end, url) for http(s) URLs in `text`.
+
+    Deliberately only those two schemes: the span becomes a button that hands
+    the string to a process launcher, and file:// or javascript: reaching that
+    launcher is the whole reason to name the schemes rather than match any
+    'x://'. Trailing sentence punctuation is trimmed the way path_spans trims
+    it, so 'see https://x/y.' links y and not 'y.'.
+
+    A bare '#117' is NOT matched: which repository a session means is not
+    knowable from its log, so the protocol records whole URLs instead of
+    guessing one.
+    """
+    out = []
+    for m in _URL.finditer(str(text or "")):
+        raw = m.group(0).rstrip(".,;:!?")
+        if "://" in raw and not raw.endswith("://"):
+            out.append((m.start(), m.start() + len(raw), raw))
+    return out
+
+
 _PATHISH = re.compile(r"[^\s'\"<>()\[\]]*/[^\s'\"<>()\[\]]*")
 
 
@@ -633,6 +660,32 @@ def selftest():
         sp = path_spans(f"see {real} ok", roots)
         assert len(sp) == 1 and f"see {real} ok"[sp[0][0]:sp[0][1]] == str(real), \
             "the span must index the ORIGINAL string exactly"
+
+    # url_spans: the span becomes a button that hands its string to a process
+    # launcher, so the scheme is named, never guessed.
+    u = "https://github.com/gabenavarro/table-talk/pull/117"
+    assert url_spans(f"see {u} now") == [(4, 4 + len(u), u)], \
+        "the span must index the ORIGINAL string exactly"
+    assert url_spans(f"{u}.") == [(0, len(u), u)], \
+        "a trailing sentence period is not part of the URL"
+    assert url_spans("http://127.0.0.1:8731/") == [(0, 22, "http://127.0.0.1:8731/")]
+    assert url_spans(f"a {u} b {u} c")[1][2] == u, "several URLs in one string"
+    assert url_spans("") == [] and url_spans(None) == []
+    assert url_spans("PR #117") == [], \
+        "a bare #ref is not a URL: which repo a session means is not knowable"
+    assert url_spans("no links here") == []
+    for hostile in ("file:///etc/passwd", "javascript:alert(1)", "ftp://x/y",
+                    "data:text/html,x", "HTTPS://X/Y", "xhttps://y/z"):
+        assert url_spans(hostile) == [], \
+            f"{hostile!r} must never become a button: the string reaches a launcher"
+    assert url_spans("https://") == [] and url_spans("https://x")[0][2] == "https://x"
+    assert url_spans("https://x/y\x00z")[0][2] == "https://x/y", \
+        "a control character ends the URL: a real one has none, and the match " \
+        "becomes an argv element"
+    assert url_spans("xhttps://y/z") == [], \
+        "the scheme must start the token, or the TAIL of a word becomes a link"
+    assert url_spans("(https://x/y)") == [(1, 12, "https://x/y")], \
+        "surrounding brackets are not part of the URL"
     print("ok")
 
 
