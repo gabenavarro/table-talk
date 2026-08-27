@@ -211,7 +211,7 @@ body{background:var(--bg);color:var(--ink);margin:0}
    moment `why` wrapped to three lines the ├ stayed at the top of that tall row
    while the └ sat at the top of the next - a visible gap with nothing in it.
    A rule cannot break: ::before spans the row's whole height whatever it wraps
-   to, and 2px past it to bridge the next row's margin-top, so consecutive
+   to, and 7px past it to bridge the next row's margin-top, so consecutive
    sub-lines meet. ::after is the arm, at the first line's middle. The last
    sub-line stops its rule at the arm - that is the corner, and it still meets
    the rule coming down from above. */

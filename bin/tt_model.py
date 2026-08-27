@@ -174,9 +174,10 @@ def weight(state):
 
     Never from measured pixels: those change on every re-render, and a weight
     that changes makes the packer move windows while they are being read. Done
-    items and terms cost nothing because they live in collapsed sections.
-    Progress text is deliberately not measured - it changes on nearly every
-    poll, and packing must not.
+    items cost nothing except their sketch, which is still drawn; terms cost
+    nothing because they live in collapsed sections. Progress text is
+    deliberately not measured - it changes on nearly every poll, and packing
+    must not.
     """
     units = 1
     for ev in state.values():
