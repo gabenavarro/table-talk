@@ -88,6 +88,11 @@ existing item. Keep a sketch at most 40 columns wide and ~12 lines: it must
 fit the narrowest card. Box-drawing and arrows read best (┌─┐ │ → ▲). ASCII
 renders in the terminal too, so the same sketch can appear in the reply body.
 
+Both also take `--intuitive "<one plain-English sentence>"` — what this is
+and what is needed, for a reader with no context, ≤ 25 words. It renders as
+the first sub-row (`int`) above why/rec. Record it whenever the ask or the
+job is jargon-heavy; skip it when the headline is already plain.
+
 For a picture too big for a card, record a standalone mermaid diagram —
 `table-talk diagram "<mermaid source>" --title "<short name>"` — and point
 the user at the dashboard (http://127.0.0.1:8731), which renders it live;
