@@ -6,12 +6,22 @@
      gruvbox hard, #e8e6dc is the light theme's own selection colour), so panels
      separate without a single drop shadow;
    - terracotta #d97757 is claude-code-light's declared CURSOR colour, so it
-     appears only where a cursor, focus ring or mark would - never as a wash. */
+     appears only where a cursor, focus ring or mark would - never as a wash.
+
+   --sel is SELECTION (a state you chose); --hover is a pointer passing through,
+   and the two move in opposite directions per theme. Hover must always widen the
+   gap to the text: light text on a dark ground gets a DARKER hover, dark text on
+   a light ground a lighter one. Both used --sel before, which meant dark mode
+   lightened #282828 to #665c54 under the pointer and every glyph on the row lost
+   contrast at the moment you were reading it (--ink-3 fell to 1.77:1; it reads
+   4.71:1 on the new one). Deliberately NOT in tt_config's configurable token
+   list: it is a consequence of --surface, not an independent choice, and a
+   second knob to keep in sync with it is how the two drift apart. */
 :root{
   --bg:#e8e6dc; --surface:#faf9f5; --surface-2:#f2f0e8;
   --ink:#141413; --ink-2:#6f6e68; --ink-3:#93918a;
   --rule:color-mix(in srgb,#b0aea5 62%,transparent);
-  --sel:#e8e6dc; --caret:#d97757;
+  --sel:#e8e6dc; --hover:#ffffff; --caret:#d97757;
   --act:#a53a2e; --act-2:#d97757;
   --job:#3668a0; --job-2:#6a9bcc;
   --gls:#8a6a10; --gls-2:#b88a28;
@@ -24,7 +34,9 @@ body.body--dark{
   --bg:#1d2021; --surface:#282828; --surface-2:#32302f;
   --ink:#ebdbb2; --ink-2:#a89984; --ink-3:#928374;
   --rule:color-mix(in srgb,#928374 34%,transparent);
-  --sel:#665c54; --caret:#8ec07c;
+  /* one step under the page ground (#1d2021 bg0_hard): #928374, the faintest ink
+     the sheet uses, reads 4.65:1 on it and 4.01:1 on the resting surface */
+  --sel:#665c54; --hover:#191b1c; --caret:#8ec07c;
   --act:#fb4934; --act-2:#cc241d;
   --job:#83a598; --job-2:#458588;
   --gls:#fabd2f; --gls-2:#d79921;
@@ -76,14 +88,14 @@ body{background:var(--bg);color:var(--ink);margin:0}
 .dw-sort b{color:var(--gls);font-weight:700}
 .dw-row{display:grid;grid-template-columns:15px 1fr;gap:1px 4px;width:100%;text-align:left;
   border:0;background:transparent;font:inherit;color:inherit;cursor:pointer;padding:6px 10px 7px}
-.dw-row:hover{background:var(--sel)}
+.dw-row:hover{background:var(--hover)}
 .dw-row:focus-visible{outline:2px solid var(--caret);outline-offset:-2px}
 .dw-g{color:var(--ink-3);opacity:.88;font-size:11.5px}
 /* the triangle is its own click target - it folds the group while the rest of
    the row scopes the wall. Padded out to a real hit area, negatively margined
    back so the guide column still lines up with the ├ and │ below it. */
 .dw-fold{cursor:pointer;padding:2px 6px;margin:-2px -6px;border-radius:2px}
-.dw-fold:hover{color:var(--caret);opacity:1;background:var(--sel)}
+.dw-fold:hover{color:var(--caret);opacity:1;background:var(--hover)}
 .dw-l1{display:flex;align-items:baseline;gap:7px;min-width:0}
 .dw-nm{font-weight:700;color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .dw-sess .dw-nm{font-weight:400;color:var(--ink-2);font-size:11.5px}
@@ -105,7 +117,7 @@ body{background:var(--bg);color:var(--ink);margin:0}
 .rail-item{border:0;background:transparent;font:inherit;color:inherit;cursor:pointer;width:100%;
   padding:7px 0 8px;display:flex;flex-direction:column;align-items:center;gap:3px;
   border-bottom:1px solid color-mix(in srgb,var(--rule) 45%,transparent)}
-.rail-item:hover{background:var(--sel)}
+.rail-item:hover{background:var(--hover)}
 .rail-ab{font-size:11px;font-weight:700;color:var(--ink)}
 .rail-t{width:34px;height:5px;background:color-mix(in srgb,var(--ink-3) 32%,transparent);
   overflow:hidden}
@@ -155,9 +167,17 @@ body{background:var(--bg);color:var(--ink);margin:0}
 /* every .row selector is scoped to the window body on purpose: 'row' is also a
    Quasar utility class, and QField's own markup carries it - an unscoped
    .row{display:grid} rule collapses the filter input to a ~40 px stub */
+/* overflow-wrap:anywhere, not break-word: a grid item's automatic minimum is its
+   MIN-CONTENT width, and only `anywhere` lets a long unbreakable run (a path, a
+   sha, a URL) count as breakable when that minimum is computed. With break-word
+   the cell still demands the whole token's width, pushes the 1fr track past the
+   card and the wall scrolls sideways. Inherited, so it reaches the .lk buttons
+   inside a cell too. min-width:0 covers the same floor for anything that is not
+   text. */
 .win-b .row{display:grid;grid-template-columns:42px 1fr;gap:8px;padding:5px 9px 8px;
-  align-items:start;border-left:3px solid transparent}
-.win-b .row:hover{background:var(--sel)}
+  align-items:start;border-left:3px solid transparent;overflow-wrap:anywhere}
+.win-b .row>*{min-width:0}
+.win-b .row:hover{background:var(--hover)}
 .win-b .row.changed{border-left-color:var(--act)}
 .win-b .row.changed-job{border-left-color:var(--job)}
 /* the filter dims, it never hides — an open action is never removed from the wall */
@@ -169,10 +189,23 @@ body{background:var(--bg);color:var(--ink);margin:0}
    block flow it drops onto its own line under the title instead of trailing it */
 .win-b .row .ttl{color:var(--ink);line-height:1.5;display:flex;flex-wrap:wrap;
   align-items:baseline;gap:.35em;min-width:0}
-/* why/rec are prose, hung off the action on real box-drawing guides */
-.sub{display:grid;grid-template-columns:20px 28px 1fr;gap:6px;margin-top:2px;
+/* why/rec are prose, hung off the action on ONE continuous guide.
+   Drawn as ├─ and └─ glyphs it was one isolated character per row, and the
+   moment `why` wrapped to three lines the ├ stayed at the top of that tall row
+   while the └ sat at the top of the next - a visible gap with nothing in it.
+   A rule cannot break: ::before spans the row's whole height whatever it wraps
+   to, and 2px past it to bridge the next row's margin-top, so consecutive
+   sub-lines meet. ::after is the arm, at the first line's middle. The last
+   sub-line stops its rule at the arm - that is the corner, and it still meets
+   the rule coming down from above. */
+.sub{position:relative;display:grid;grid-template-columns:28px 1fr;gap:6px;
+  margin-top:2px;padding-left:20px;
   font-family:var(--prose);font-size:12.5px;line-height:1.5;color:var(--ink-2)}
-.sub .gd{font-family:var(--mono);color:var(--ink-3);font-size:11.5px;line-height:1.62}
+.sub::before{content:"";position:absolute;left:3px;top:0;bottom:-2px;
+  border-left:1px solid var(--ink-3)}
+.sub::after{content:"";position:absolute;left:3px;top:9px;width:9px;
+  border-top:1px solid var(--ink-3)}
+.sub:last-child::before{bottom:auto;height:9px}
 .sub .lb{font-family:var(--mono);font-size:9.5px;font-weight:700;letter-spacing:.11em;
   text-transform:uppercase;color:var(--ink-3);line-height:2.1}
 .meter{margin-top:4px;display:flex;gap:8px;align-items:baseline;flex-wrap:wrap}

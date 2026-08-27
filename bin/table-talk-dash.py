@@ -189,6 +189,23 @@ document.addEventListener('visibilitychange', ttSeen);
 ttSeen();
 </script>"""
 
+# The wall's own width, announced by the page, because the server cannot read the
+# viewport (see WALL_WIDTH). A ResizeObserver rather than a resize listener: it
+# fires ONCE on observe, so the first width arrives without a resize ever
+# happening, and it also catches the drawer collapsing, which changes the wall's
+# width without changing the window's. The retry is for the wall element itself -
+# NiceGUI has not mounted the Vue root when this script parses.
+WIDTH_JS = """<script>
+const ttWall = () => {
+  const el = document.querySelector('.wall');
+  if (!el) return setTimeout(ttWall, 200);
+  new ResizeObserver(() => {
+    try { emitEvent('tt-width', el.clientWidth); } catch (e) { /* not mounted yet */ }
+  }).observe(el);
+};
+ttWall();
+</script>"""
+
 # Every key the page binds. The statusline chips are built from this same dict
 # and dispatch through the same handler, so a key can never do something no
 # click can.
@@ -222,14 +239,18 @@ GUIDES = {"open": "▾", "closed": "▸", "mid": "├", "last": "└", "line": "
 MAX_CELLS = 20     # a long session must not wreck the footer line
 BAR_CELLS = 14
 
-# The width default_cols() assumes until someone picks a column count. The real
-# viewport cannot be read from the server: the only hook that fires per client,
-# app.on_connect, runs in a context where this page's elements are unreachable
-# (verified against NiceGUI 3.16 - client.elements reads empty there and move()
-# raises "the parent slot has been deleted"), and main()'s closure runs twice per
-# process with only the second one live, so the connect handler cannot even reach
-# the live tick. cols 1|2|3 in the statusline is the deliberate override.
+# The width assumed until the page announces its own. The real viewport cannot be
+# read from the server: the only hook that fires per client, app.on_connect, runs
+# in a context where this page's elements are unreachable (verified against
+# NiceGUI 3.16 - client.elements reads empty there and move() raises "the parent
+# slot has been deleted"), and main()'s closure runs twice per process with only
+# the second one live, so the connect handler cannot even reach the live tick.
+# WIDTH_JS reports it from the client side instead, and cols 1|2|3 in the
+# statusline stays the deliberate override.
 WALL_WIDTH = 1400
+# Below this the wall packs ONE column whatever the preference says: three columns
+# of a 600px wall are 190px each, which is two or three words a line.
+NARROW = 900
 
 
 def blocks(pct, cells=BAR_CELLS):
@@ -416,10 +437,11 @@ def _action_row(ev, blink, query, changed):
                 _cell(ev.get("background", ""), query)
                 if blink:   # exactly one cursor on the page: the newest thing waiting on you
                     ui.label("▉").classes("cursor")
-            for glyph, label, field in (("├─", "why", "why"), ("└─", "rec", "rec")):
+            # no guide glyph: .sub draws the whole tree guide as one rule, because
+            # a per-row ├/└ came apart the moment `why` wrapped past one line
+            for field in ("why", "rec"):
                 with ui.element("div").classes("sub"):
-                    ui.label(glyph).classes("gd")
-                    ui.label(label).classes("lb")
+                    ui.label(field).classes("lb")
                     _cell(ev.get(field, ""), query)
 
 
@@ -453,7 +475,6 @@ def _term_row(ev, query):
         with ui.element("div"):
             _cell(ev.get("intuitive", ""), query, "ttl")
             with ui.element("div").classes("sub"):
-                ui.label("└─").classes("gd")
                 ui.label("def").classes("lb")
                 _cell(ev.get("technical", ""), query)
 
@@ -580,6 +601,14 @@ def default_cols(width):
     return 3 if width >= 1800 else (2 if width >= 1200 else 1)
 
 
+def cols_for(width, pref):
+    """How many columns a wall this wide gets. The stored preference is a MAXIMUM,
+    never a mandate: a window narrowed to a laptop half-screen packs one column
+    even with 3 chosen, and gets its 3 back when the window grows. pref 0 is
+    'auto', which is what `or` reads it as."""
+    return 1 if width < NARROW else (pref or default_cols(width))
+
+
 def layout_key(visible, cols, marks, folds, zoomed, scope, sort, drawer_open):
     """Everything that changes WHERE a window sits. The wall re-packs when this
     changes and at no other time - never on a poll that only changed text."""
@@ -616,6 +645,26 @@ def selftest():
     assert "prefers-reduced-motion" in css, "motion must be defeatable"
     assert "ui-monospace" in css and "system-ui" in css, "both faces need a real fallback stack"
     assert "--ctp-" not in css, "the Catppuccin palette is gone"
+    # hover moves AWAY from the text, which is a different direction per theme
+    assert "--hover:#ffffff" in css and "--hover:#191b1c" in css, \
+        "both palettes need a --hover, and light lightens where dark darkens"
+    for rule in (".dw-row:hover", ".rail-item:hover", ".win-b .row:hover", ".dw-fold:hover"):
+        decl = css.split(rule + "{")[1].split("}")[0]
+        assert "var(--sel)" not in decl and "var(--hover)" in decl, \
+            f"{rule} must use --hover: --sel is the SELECTED colour and in dark it " \
+            "LIGHTENS the row you are reading, which is the whole bug"
+    sub = css.split(".sub{")[1].split("}")[0]
+    row = css.split(".win-b .row{")[1].split("}")[0]
+    assert "overflow-wrap:anywhere" in row, \
+        "a prose cell must break a long path rather than push the card wider than the wall"
+    assert "nowrap" not in row and "nowrap" not in sub, \
+        "nothing in a prose cell may refuse to wrap"
+    assert ".win-b .row>*{min-width:0}" in css, \
+        "a grid item's automatic minimum is min-content, which overflows the track"
+    assert ".sub::before" in css and ".sub:last-child::before" in css, \
+        "the tree guide is one continuous RULE with a corner on the last sub-line: " \
+        "drawn as a ├/└ glyph per row it broke open the moment `why` wrapped"
+    assert "position:relative" in sub, "the guide is absolutely positioned against .sub"
     assert set(THEME_ICONS) == set(THEME_MODES)
 
     # theme_css: the config is a second untrusted route into the stylesheet, and
@@ -669,6 +718,16 @@ def selftest():
     assert ".tt-dim" in css and ".tt-hit" in css, "dim and highlight need styles to mean anything"
     assert ".dw-find" in css and ".tt-none" in css, "the filter bar and empty wall need styles"
     assert default_cols(2000) == 3 and default_cols(1400) == 2 and default_cols(800) == 1
+    assert cols_for(700, 3) == 1 and cols_for(899, 3) == 1, \
+        "the stored cols is a MAXIMUM: a narrow wall packs one column whatever it says"
+    assert cols_for(1280, 3) == 3 and cols_for(1920, 3) == 3, \
+        "and the preference comes straight back when the window is wide again"
+    assert cols_for(2000, 0) == 3 and cols_for(1300, 0) == 2 and cols_for(700, 0) == 1, \
+        "0 is auto and still clamps"
+    assert "ResizeObserver" in WIDTH_JS and "emitEvent('tt-width'" in WIDTH_JS, \
+        "the wall's width can only come from the client; the server cannot read it"
+    assert "clientWidth" in WIDTH_JS, \
+        "the WALL's width, not the window's: collapsing the drawer changes one and not the other"
     a = layout_key(["x", "y"], 2, {"x"}, set(), None, None, "recent", True)
     b = layout_key(["x", "y"], 2, {"x"}, set(), None, None, "recent", True)
     assert a == b, "identical state must produce an identical key, so no needless re-pack"
@@ -928,6 +987,7 @@ def main(port=None):
     ui.add_head_html(TOAST_JS)
     ui.add_head_html(BLUR_JS)
     ui.add_head_html(VISIBILITY_JS)
+    ui.add_head_html(WIDTH_JS)
     # the app shell owns the viewport; NiceGUI's page wrapper must not pad it
     ui.query(".nicegui-content").style("padding:0;gap:0;max-width:none")
 
@@ -973,6 +1033,25 @@ def main(port=None):
     # function, so two dashboards keep independent watermarks (measured - a
     # hidden tab held its gutter while a visible one cleared its own).
     watching = True                    # tab visible until the page says otherwise
+    wall_width = WALL_WIDTH            # until WIDTH_JS says otherwise
+
+    def on_width(e):
+        """The wall's width, straight off the client. Deliberately NOT persisted:
+        it is a property of this window, not a preference, and two tabs at
+        different widths must not overwrite each other's column count.
+        A tick only when the CLAMP flips - a ResizeObserver fires on every frame
+        of a drag, and re-polling every file for a width that changes nothing
+        about the layout is the one thing this must not do."""
+        nonlocal wall_width
+        try:
+            w = int(float(str(e.args).strip("[]")))
+        except (TypeError, ValueError):        # a hand-crafted event, not the page
+            return
+        was, wall_width = wall_width, w
+        if (w < NARROW) != (was < NARROW):
+            tick()
+
+    ui.on("tt-width", on_width)
 
     def on_seen(e):
         # NiceGUI hands a single emitEvent argument through unwrapped ('visible'),
@@ -1531,9 +1610,8 @@ def main(port=None):
             visible = [zoomed]
         on_wall = visible
         drawer_open = store("drawer_open", cfg["ui"]["drawer_open"])
-        # ui.columns is 0 = auto, which is exactly what `or` reads as
         cols = (1 if zoomed in windows
-                else store("cols", cfg["ui"]["columns"]) or default_cols(WALL_WIDTH))
+                else cols_for(wall_width, store("cols", cfg["ui"]["columns"])))
         key = layout_key(visible, cols, marks, folds, zoomed, scope, sort, drawer_open)
         if key != layout:
             layout = key
