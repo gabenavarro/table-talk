@@ -5,6 +5,7 @@
 # ///
 """table-talk dashboard: live NiceGUI view of the table-talk event logs."""
 import argparse
+import logging
 import time
 from datetime import datetime
 from pathlib import Path
@@ -430,7 +431,9 @@ def selftest():
     assert "tt-tally" in TOAST_JS and "tt-toast" in TOAST_JS
     assert ".tt-toast" in css and ".tt-toast-in" in css, "toast script and styles must pair"
     assert ".sl-s.hidden" in css, \
-        "set_visibility toggles a CLASS, and .sl-s{display:flex} is unlayered — it beats Tailwind's"
+        "set_visibility appends the CLASS 'hidden'; a [hidden] attribute rule would never match"
+    assert "width:100%" in css.split(".tt-app{")[1].split("}")[0], \
+        "the shell must be pinned to the viewport, or nowrap statusline segments widen the page"
     print("ok")
 
 
@@ -871,6 +874,10 @@ def main(port):
         try:
             poll()
         except Exception:
+            # Catching before NiceGUI's timer does removes the only traceback
+            # anyone gets. The frozen bar tells whoever is watching it; the log
+            # is for whoever is not.
+            logging.exception("poll failed")
             cadence.classes(replace="sl-s sl-stale")
             return
         spin_i = (spin_i + 1) % len(SPINNER)

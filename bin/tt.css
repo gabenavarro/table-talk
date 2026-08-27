@@ -36,7 +36,12 @@ html,body{height:100%}
 body{background:var(--bg);color:var(--ink);margin:0}
 /* Typography is scoped to the app shell rather than body so the Quasar bits we
    still use (the filter field) keep their own metrics and are opted in by hand. */
-.tt-app{display:flex;flex-direction:column;height:100vh;overflow:hidden;
+/* width:100% is load-bearing: .nicegui-content is a flex column with
+   align-items:flex-start, so .tt-app is a flex item that shrink-to-fits to its
+   MAX-CONTENT width. The statusline's segments are white-space:nowrap, so
+   without this the shell (and .tt-main with it) takes their combined width and
+   the page scrolls sideways - measured 909.53px against a 900px viewport. */
+.tt-app{display:flex;flex-direction:column;height:100vh;width:100%;overflow:hidden;
   font-family:var(--mono);font-size:12px;line-height:1.55}
 .tt-main{display:grid;grid-template-columns:284px 1fr;flex:1;min-height:0}
 .tt-main.tt-collapsed{grid-template-columns:54px 1fr}
@@ -182,20 +187,24 @@ body{background:var(--bg);color:var(--ink);margin:0}
 /* ---- statusline ---- */
 .sl{display:flex;align-items:center;background:var(--surface-2);border-top:1px solid var(--rule);
   font-size:11.5px;color:var(--ink-2);height:28px;padding:0 3px;flex:0 0 28px}
-.sl-s{padding:0 10px;display:flex;align-items:center;gap:6px;white-space:nowrap}
-/* set_visibility() toggles the CLASS 'hidden', and Tailwind's .hidden lives in
-   the utilities @layer while this sheet is unlayered - unlayered beats every
-   layer, so .sl-s{display:flex} would win and the segment would never hide. */
+.sl-s{padding:0 10px;display:flex;align-items:center;gap:6px;white-space:nowrap;flex-shrink:0}
+/* Keyed on the CLASS because that is what set_visibility() toggles - it appends
+   'hidden' to the class list, it does not set a [hidden] attribute. Quasar's own
+   .hidden{display:none !important} would win here anyway; this states the intent
+   locally rather than depending on a vendor rule we do not control. */
 .sl-s.hidden{display:none}
 .sl-s+.sl-s{border-left:1px solid var(--rule)}
 .sl-s.on{background:var(--ink);color:var(--surface);font-weight:700;height:100%}
 .sl-s.on .spin{color:var(--ok)}
 .sl-stale{color:var(--act)}
 .sl-scope{color:var(--caret)}
+/* the one segment allowed to give up room: at a narrow width the hints truncate
+   so the tally, the cadence and the clock all survive */
+.sl-k{flex-shrink:1;min-width:0;overflow:hidden}
 .sl-k b{color:var(--mag);font-weight:700}
 .sl-c{border:0;background:transparent;font:inherit;cursor:pointer;color:var(--ink-3);padding:0 4px}
 .sl-c.on{color:var(--gls);font-weight:700}
-.sl-clock{margin-left:auto;padding:0 10px;color:var(--ink-3)}
+.sl-clock{margin-left:auto;padding:0 10px;color:var(--ink-3);flex-shrink:0}
 .spin{display:inline-block;width:9px;color:var(--ok)}
 
 .tt-none{margin:auto;text-align:center;color:var(--ink-3);padding:48px}
