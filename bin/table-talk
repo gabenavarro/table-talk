@@ -260,6 +260,14 @@ def selftest():
     assert with_extras({}, NS()) == {}, "absent flags write nothing"
     assert with_extras({}, NS(diagram="", intuitive="i")) == {"intuitive": "i"}, \
         "an empty string is not an extra - it must not land in the event"
+    i4 = add_event("proj", {"type": "action", "status": "open", "background": "b",
+                            "why": "w", "rec": "r"})
+    update(i4, with_extras({}, NS(intuitive="plain words", diagram=None)))
+    got = fold(session_file("proj"))[i4]
+    assert got["intuitive"] == "plain words" and got["background"] == "b", \
+        "an amend adds the field and touches nothing else"
+    assert "progress" not in got, \
+        "amending an ACTION must not invent a progress note it never had"
     # serve_refusal: pure, so both directions are testable without exec'ing uv
     assert serve_refusal({}, False) is None, "a human terminal is never refused"
     assert serve_refusal({"CLAUDE_CODE_SSE_PORT": "1"}, False) is None, \
@@ -294,7 +302,7 @@ def main():
 
     pr = sub.add_parser("progress", help="update progress on an item")
     pr.add_argument("id")
-    pr.add_argument("text")
+    pr.add_argument("text", nargs="?", help="progress note; omit to only amend --intuitive/--diagram")
     pr.add_argument("--diagram", help="add or replace the item's ASCII sketch")
     pr.add_argument("--intuitive", help="add or replace the item's plain-English line")
 
@@ -331,7 +339,7 @@ def main():
         print(add_event(args.project, with_extras(
             {"type": "task", "status": "open", "what": args.what}, args)))
     elif args.cmd == "progress":
-        update(args.id, with_extras({"progress": args.text}, args))
+        update(args.id, with_extras({"progress": args.text} if args.text else {}, args))
     elif args.cmd == "done":
         update(args.id, {"status": "done"})
     elif args.cmd == "term":

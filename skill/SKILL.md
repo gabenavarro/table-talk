@@ -70,6 +70,7 @@ words: ask ≤ 25, detail after the dash ≤ 50 (and ≤ 2 sentences), `--why` �
 | Decision only the user can make | `table-talk action "<the ask>" --why "<why it matters>" --rec "<your recommendation>"` → prints ID |
 | Background work starts | `table-talk task "<what>"` → prints ID |
 | Background work advances | `table-talk progress <id> "<update>"` |
+| Item needs a plain line or sketch later | `table-talk progress <id> --intuitive "<line>" --diagram "<ascii>"` (no note needed) |
 | Item answered/finished | `table-talk done <id>` |
 | Jargon first used | `table-talk term "<term>" --intuitive "<plain one-liner>" --technical "<precise definition>"` |
 | Sketch that explains one item | add `--diagram "<ascii>"` to the `action`/`task`/`progress` command |
