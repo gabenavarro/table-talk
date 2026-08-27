@@ -168,25 +168,35 @@ document.addEventListener('click', e => {
 });
 </script>"""
 
-# This dashboard lives on a second monitor: a row that flashes for 900 ms while
-# you are looking at your editor is a change you never saw. So the seen-watermark
-# is advanced by the Page Visibility API, not by a timer - it FREEZES while the
-# tab is hidden, and every row that moved meanwhile keeps its gutter until you
-# are genuinely back.
+# A row that flashes while you are looking at your editor is a change you never
+# saw, so the seen-watermark is advanced by INTERACTION - a click, a keypress or
+# a scroll - and by nothing else.
 #
-# The state is announced ONCE at startup as well as on every transition. A tab
-# that was already hidden when it loaded - session restore, opened in the
-# background, reloaded from another tab - fires no visibilitychange, ever, and
-# without the announcement the server would assume it is being watched and clear
-# gutters nobody saw. The retry is for the Vue root: emitEvent needs it mounted,
-# and NiceGUI queues the message itself until the socket handshake.
-VISIBILITY_JS = """<script>
+# It used to be advanced by the Page Visibility API, which cannot carry this on
+# its own: that API reports tab BACKGROUNDING only. It cannot see a covered
+# window and it has no idea which monitor you are looking at. This dashboard's
+# deployment is a second monitor that is permanently on screen, where
+# document.hidden is therefore never true - measured there, a gutter appeared on
+# one poll and was gone on the next (1.0s of an 8s untouched window at a 1s
+# cadence), which is exactly the fleeting flash the gutter exists to replace.
+# Interaction is the only signal that proves a human looked. Returning to a
+# genuinely backgrounded tab stays as a second signal: it is real when it fires,
+# it just never fires on the wall.
+#
+# Capture phase because a scroll inside the wall does not bubble to document.
+# The throttle is because a scroll fires per frame and every call is one socket
+# message for a mark that is idempotent. The retry is for the Vue root:
+# emitEvent needs it mounted, and NiceGUI queues the message itself until the
+# socket handshake.
+SEEN_JS = """<script>
+let ttLast = 0;
 const ttSeen = () => {
-  try { emitEvent('tt-seen', document.visibilityState); }
+  if (Date.now() - ttLast < 300) return;
+  try { emitEvent('tt-seen', 1); ttLast = Date.now(); }
   catch (e) { setTimeout(ttSeen, 200); }
 };
-document.addEventListener('visibilitychange', ttSeen);
-ttSeen();
+for (const t of ['click', 'keydown', 'scroll']) document.addEventListener(t, ttSeen, true);
+document.addEventListener('visibilitychange', () => { if (!document.hidden) ttSeen(); });
 </script>"""
 
 # The wall's own width, announced by the page, because the server cannot read the
@@ -805,10 +815,14 @@ def selftest():
         "the key round-trips as a JS string literal, quotes and all"
     for hostile in ('a"b', "it's", "a\"'b", "back\\slash", "</script>"):
         assert json.loads(scroll_js(hostile).split("const k=")[1].split(";")[0]) == hostile
-    assert "visibilitychange" in VISIBILITY_JS and "emitEvent" in VISIBILITY_JS
-    assert "\nttSeen();" in VISIBILITY_JS, \
-        "a tab that was ALREADY hidden when it loaded fires no visibilitychange " \
-        "ever, so the state must also be announced once at startup"
+    assert "emitEvent" in SEEN_JS
+    for ev in ("click", "keydown", "scroll"):
+        assert f"'{ev}'" in SEEN_JS, \
+            f"the gutter clears on INTERACTION: without a {ev} listener this " \
+            "dashboard - permanently visible on a second monitor, where " \
+            "document.hidden is never true - marks rows seen that nobody looked at"
+    assert "visibilitychange" in SEEN_JS, \
+        "returning to a backgrounded tab stays a second signal, not the only one"
     assert ".win-b .row.changed{" in css and ".win-b .row.changed-job{" in css, \
         "gutter colours must differ by kind, and stay scoped off Quasar's .row"
     cur = css.split(".win.cur>.win-t{")[1].split("}")[0]
@@ -986,7 +1000,7 @@ def main(port=None):
     ui.add_head_html(TAB_TITLE_JS)
     ui.add_head_html(TOAST_JS)
     ui.add_head_html(BLUR_JS)
-    ui.add_head_html(VISIBILITY_JS)
+    ui.add_head_html(SEEN_JS)
     ui.add_head_html(WIDTH_JS)
     # the app shell owns the viewport; NiceGUI's page wrapper must not pad it
     ui.query(".nicegui-content").style("padding:0;gap:0;max-width:none")
@@ -1022,17 +1036,18 @@ def main(port=None):
     on_wall = []                       # what poll() last put on the wall, in order
     # Everything newer than a window's watermark carries a gutter. Per WINDOW,
     # not one for the page: a window off the wall (zoom, scope, needs-me) is one
-    # you could not have seen, so its watermark stands still until it is back and
-    # you have had a poll to look at it. The floor is NOW, which is what makes a
+    # you could not have seen, so its watermark stands still until it is back on
+    # the wall AND you have touched the page since. The floor is NOW, which is what makes a
     # freshly opened dashboard quiet - a change you were never here for is not a
     # change you missed. Deliberately not persisted: the watermark means "since
     # you last looked", and a reload is you looking.
     opened_ts = time.time()
     seen_at = {}                       # session key -> when its rows were last on screen
     # Not shared between tabs: NiceGUI gives each client its own run of this
-    # function, so two dashboards keep independent watermarks (measured - a
-    # hidden tab held its gutter while a visible one cleared its own).
-    watching = True                    # tab visible until the page says otherwise
+    # function, so two dashboards keep independent watermarks (measured - of two
+    # tabs open at once, the one that was clicked cleared its own gutter and the
+    # untouched one kept its).
+    touched = False                    # SEEN_JS saw a click/keypress/scroll; poll() consumes it
     wall_width = WALL_WIDTH            # until WIDTH_JS says otherwise
 
     def on_width(e):
@@ -1054,12 +1069,10 @@ def main(port=None):
     ui.on("tt-width", on_width)
 
     def on_seen(e):
-        # NiceGUI hands a single emitEvent argument through unwrapped ('visible'),
-        # not as ['visible'] - and a truth test on the wrong one of those two is
-        # silently always-True, which would kill the whole feature. Carrying the
-        # Page Visibility API's own string and matching it survives either shape.
-        nonlocal watching
-        watching = "visible" in str(e.args)
+        # A latch, not a state: SEEN_JS only ever fires this when a human touched
+        # the page, so the argument carries nothing and is deliberately ignored.
+        nonlocal touched
+        touched = True
 
     ui.on("tt-seen", on_seen)
 
@@ -1575,10 +1588,11 @@ def main(port=None):
                 dress(key, windows[key])
 
     def poll():
-        nonlocal layout, on_wall
+        nonlocal layout, on_wall, touched
         # read the clock BEFORE the files: a write that lands between the two
         # would otherwise be stamped as already seen and never get its gutter
         now = time.time()
+        was_on_wall = on_wall          # the wall the interaction actually landed on
         states = {p.stem: fold_cached(p) for p in sorted(DATA_DIR.glob("*.jsonl"), reverse=True)}
         groups = M.group_sessions(list(states.items()))
         where = {s["key"]: (g["project"], s["index"]) for g in groups for s in g["sessions"]}
@@ -1658,17 +1672,23 @@ def main(port=None):
                             (win["ix"], f":{where[k][1]}")):
                 if el.text != txt:
                     el.set_text(txt)
-        # Only now, only if you are actually looking, and only for the windows we
-        # just drew, does anything count as seen. Hidden, this never runs and the
-        # gutters pile up; off the wall, that window's watermark stays put.
+        # Only now, only if you touched the page since the last poll, and only
+        # for the windows we just drew, does anything count as seen. Untouched,
+        # this never runs and the gutters pile up until you do. A window that was
+        # NOT on the previous wall is skipped: the interaction that brought it
+        # back (Escape out of a zoom) happened while it was still off screen, so
+        # it keeps its gutter until the next one - which is the whole point of a
+        # watermark per window rather than one for the page.
         # int(now) - 1, not now: bin/table-talk stamps ts in WHOLE seconds, so an
         # event written at 100.9 carries ts=100 and a float watermark of 100.3
         # would mark it already-seen. One second back is the newest watermark
         # that cannot swallow a change - it costs a redundant gutter for one poll
         # and never a missed one.
-        if watching:
+        if touched:
+            touched = False
             for k in visible:
-                seen_at[k] = int(now) - 1
+                if k in was_on_wall:
+                    seen_at[k] = int(now) - 1
 
         # The tally counts EVERY session, not just what is on the wall: scope and
         # zoom are choices about the view, and the tab title and the toast hang
