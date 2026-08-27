@@ -731,6 +731,16 @@ def abbrev(project):
     return project[:3] if project else "?"
 
 
+def session_label(state, index):
+    """What follows the colon in a window title: the code of the session that
+    wrote this file last, or the tmux index for files recorded before stamping."""
+    best, code = -1, ""
+    for ev in state.values():
+        if ev.get("sid") and ev.get("ts", 0) > best:
+            best, code = ev.get("ts", 0), str(ev["sid"])
+    return code or str(index)
+
+
 def default_cols(width):
     """Column count before the user picks one. Three on a wide second monitor."""
     return 3 if width >= 1800 else (2 if width >= 1200 else 1)
@@ -771,6 +781,15 @@ def selftest():
     assert diagram_rows(st) == [], "no diagram events, no rows"
     assert [r["id"] for r in done_rows(dst)] == ["b"], \
         "a diagram is never an obligation: done still spans actions and tasks only"
+    st_sid = {"a": {"id": "a", "sid": "beef", "ts": 5},
+              "b": {"id": "b", "sid": "cafe", "ts": 9}}
+    assert session_label(st_sid, 3) == "cafe", "the session that wrote LAST names the window"
+    assert session_label({"a": {"id": "a", "ts": 1}}, 3) == "3", \
+        "a file recorded before session stamping keeps its tmux index"
+    assert session_label({}, 0) == "0"
+    assert session_label({"a": {"id": "a", "sid": "beef"}}, 7) == "beef", \
+        "a hand-edited line with a sid and no ts must not raise: poll() calls " \
+        "this per window with no guard, so one bad line stops the whole wall"
     assert _dim(st["a"], "") == "" and _dim(st["a"], "  ") == "", "an empty query dims nothing"
     assert _dim(st["a"], "BG") == "", "a matching row is not dimmed, and matching ignores case"
     assert _dim(st["a"], "kubernetes") == " tt-dim", "a non-matching row dims — it never hides"
@@ -1927,7 +1946,7 @@ def main(port=None):
             # both advance without the window's own data changing: age with the
             # clock, the tmux index whenever a newer sibling session appears
             for el, txt in ((win["when"], ago(win["latest"]) if win["latest"] else ""),
-                            (win["ix"], f":{where[k][1]}")):
+                            (win["ix"], f":{session_label(states[k], where[k][1])}")):
                 if el.text != txt:
                     el.set_text(txt)
         # Only now, only if you touched the page since the last poll, and only
