@@ -110,12 +110,14 @@ scales down until its labels are unreadable.
 **🔴 Actions needed from you**
 | ID | What I need | Why it matters | Recommendation |
 
-Every OPEN action, not just the ones recorded this reply. An action stays in
-this table until it is `done`, however many replies that takes — the dashboard
-keeps showing it, and a table that quietly drops it is the one place the two
-disagree. Check before writing the tables rather than trusting memory:
+Every action still open **in this project**, not just the ones recorded this
+reply. An action stays in this table until it is `done`, however many replies
+that takes — the dashboard keeps showing it, and a table that quietly drops it
+is the one place the two disagree. Another project's actions belong to its own
+card, never to this reply. Check before writing the tables rather than trusting
+memory:
 
-    table-talk show | grep -c '"status": "open"'
+    table-talk show "$(basename "$PWD")"
 
 **🔵 Background work**
 | ID | What | Progress |
