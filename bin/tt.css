@@ -183,7 +183,10 @@ body{background:var(--bg);color:var(--ink);margin:0}
 .sl{display:flex;align-items:center;background:var(--surface-2);border-top:1px solid var(--rule);
   font-size:11.5px;color:var(--ink-2);height:28px;padding:0 3px;flex:0 0 28px}
 .sl-s{padding:0 10px;display:flex;align-items:center;gap:6px;white-space:nowrap}
-.sl-s[hidden]{display:none}   /* a class-set display would beat the UA [hidden] rule */
+/* set_visibility() toggles the CLASS 'hidden', and Tailwind's .hidden lives in
+   the utilities @layer while this sheet is unlayered - unlayered beats every
+   layer, so .sl-s{display:flex} would win and the segment would never hide. */
+.sl-s.hidden{display:none}
 .sl-s+.sl-s{border-left:1px solid var(--rule)}
 .sl-s.on{background:var(--ink);color:var(--surface);font-weight:700;height:100%}
 .sl-s.on .spin{color:var(--ok)}
@@ -196,6 +199,15 @@ body{background:var(--bg);color:var(--ink);margin:0}
 .spin{display:inline-block;width:9px;color:var(--ok)}
 
 .tt-none{margin:auto;text-align:center;color:var(--ink-3);padding:48px}
+
+/* The toast is the only thing that draws outside .tt-app, so it cannot inherit
+   the shell's face - it names its own. Fires only when the open-action tally
+   RISES; see TOAST_JS. */
+.tt-toast{position:fixed;top:14px;right:16px;z-index:9999;background:var(--surface-2);
+  color:var(--act);border:1px solid var(--rule);border-radius:3px;padding:6px 12px;
+  font-family:var(--mono);font-size:11.5px;font-weight:700;
+  opacity:0;transform:translateY(-6px);transition:opacity .3s ease,transform .3s ease}
+.tt-toast-in{opacity:1;transform:none}
 
 @media (prefers-reduced-motion: reduce){
   *,*::before,*::after{animation-duration:.001ms !important;

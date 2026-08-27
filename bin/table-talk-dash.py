@@ -33,6 +33,73 @@ document.addEventListener('click', e => {
 });
 </script>"""
 
+# Both of these key on the statusline's open-action tally (#tt-tally) and read
+# the count out of its glyph text: "●6 open  ▶5 running" | "▶2 running" | "all
+# clear". ● prefixes actions and ▶ prefixes tasks, so /●(\d+)/ is unambiguous
+# and "no ● at all" is honestly zero.
+TAB_TITLE_JS = """<script>
+document.addEventListener('DOMContentLoaded', () => {
+  const sync = () => {
+    const el = document.getElementById('tt-tally');
+    if (!el) return;
+    const m = el.textContent.match(/●(\\d+)/);
+    document.title = (m ? `(${m[1]}) ` : '') + 'table-talk';
+  };
+  const wait = setInterval(() => {
+    const el = document.getElementById('tt-tally');
+    if (el) {
+      clearInterval(wait);
+      new MutationObserver(sync).observe(el, {childList: true, characterData: true, subtree: true});
+      sync();
+    }
+  }, 500);
+});
+</script>"""
+
+# Toast when the open-action count RISES: the baseline is read before observing,
+# so a page load or a reconnect never fires a stale burst.
+TOAST_JS = """<script>
+document.addEventListener('DOMContentLoaded', () => {
+  const show = (msg) => {
+    const t = document.createElement('div');
+    t.className = 'tt-toast';
+    t.textContent = msg;
+    document.body.appendChild(t);
+    requestAnimationFrame(() => t.classList.add('tt-toast-in'));
+    setTimeout(() => { t.classList.remove('tt-toast-in'); setTimeout(() => t.remove(), 400); }, 5000);
+  };
+  const wait = setInterval(() => {
+    const el = document.getElementById('tt-tally');
+    if (!el) return;
+    clearInterval(wait);
+    const read = () => { const m = el.textContent.match(/●(\\d+)/); return m ? +m[1] : 0; };
+    let prev = read();
+    new MutationObserver(() => {
+      const n = read();
+      if (n > prev) {
+        const d = n - prev, s = d > 1 ? 's' : '';
+        show(`${d} new action item${s} need${s ? '' : 's'} you`);
+      }
+      prev = n;
+    }).observe(el, {childList: true, characterData: true, subtree: true});
+  }, 500);
+});
+</script>"""
+
+# Advances one frame per SUCCESSFUL poll and freezes when a poll fails: liveness
+# you can trust, rather than an abstract pulse dot you have to interpret.
+SPINNER = ("⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏")
+
+
+def tally_text(open_actions, open_tasks):
+    parts = []
+    if open_actions:
+        parts.append(f"●{open_actions} open")
+    if open_tasks:
+        parts.append(f"▶{open_tasks} running")
+    return "  ".join(parts) if parts else "all clear"
+
+
 THEME_MODES = ("system", "light", "dark")
 # Glyphs, not Quasar icon names: the shell is a terminal costume and the only
 # button styling left in the sheet is the statusline's.
@@ -354,6 +421,16 @@ def selftest():
     assert GUIDES == {"open": "▾", "closed": "▸", "mid": "├", "last": "└", "line": "│", "none": " "}
     assert ".dw-row" in css and ".trk i" in css and ".rail-t" in css, \
         "the tree, its meters and the collapsed rail all need styles to mean anything"
+    assert len(SPINNER) == 10 and SPINNER[0] == "⠋"
+    assert tally_text(6, 5) == "●6 open  ▶5 running"
+    assert tally_text(0, 0) == "all clear"
+    assert tally_text(1, 0) == "●1 open"
+    assert tally_text(0, 2) == "▶2 running"
+    assert "tt-tally" in TAB_TITLE_JS and "document.title" in TAB_TITLE_JS
+    assert "tt-tally" in TOAST_JS and "tt-toast" in TOAST_JS
+    assert ".tt-toast" in css and ".tt-toast-in" in css, "toast script and styles must pair"
+    assert ".sl-s.hidden" in css, \
+        "set_visibility toggles a CLASS, and .sl-s{display:flex} is unlayered — it beats Tailwind's"
     print("ok")
 
 
@@ -377,6 +454,8 @@ def main(port):
 
     ui.add_head_html(f"<style>{load_css()}</style>")
     ui.add_head_html(COPY_JS)
+    ui.add_head_html(TAB_TITLE_JS)
+    ui.add_head_html(TOAST_JS)
     # the app shell owns the viewport; NiceGUI's page wrapper must not pad it
     ui.query(".nicegui-content").style("padding:0;gap:0;max-width:none")
 
@@ -423,6 +502,47 @@ def main(port):
                         theme_lbl = ui.label(THEME_ICONS[mode])
                 drawer = ui.element("div").classes("dw-tree")   # Task 10 renders here
             wall = ui.element("div").classes("wall")
+        # The statusline: a sibling BELOW .tt-main, not inside it, so the drawer
+        # and the wall both stop 28 px short of the floor and it spans the lot.
+        # It carries no filter readout - the drawer's N/M one already exists and
+        # lives beside the box you type into, which is where it belongs.
+        with ui.element("div").classes("sl"):
+            with ui.element("div").classes("sl-s on"):
+                spin = ui.label(SPINNER[0]).classes("spin")
+                ui.label("table-talk")
+            cadence = ui.element("div").classes("sl-s")
+            with cadence:
+                ui.label("Every 2.0s · last")
+                last_stamp = ui.label("--:--:--")
+            # id, not a class: TAB_TITLE_JS and TOAST_JS both getElementById this
+            # and hang a MutationObserver on it. Keep the id if you move it.
+            tally = ui.label("").classes("sl-s").props("id=tt-tally")
+            scope_seg = ui.element("div").classes("sl-s sl-scope")
+            with scope_seg:
+                scope_label = ui.label("")
+                clear_btn = ui.element("button").classes("sl-c")
+                with clear_btn:
+                    ui.label("✕")
+                clear_btn.on("click", lambda _: on_scope(None))
+            scope_seg.set_visibility(False)
+            col_buttons = {}
+            with ui.element("div").classes("sl-s"):
+                ui.label("cols")
+                for n in (1, 2, 3):
+                    b = ui.element("button").classes("sl-c")
+                    with b:
+                        ui.label(str(n))
+                    b.on("click", lambda _, n=n: on_cols(n))
+                    col_buttons[n] = b
+            with ui.element("div").classes("sl-s sl-k"):
+                # <b> with a nested label, never ui.html: exactly one ui.html is
+                # allowed on this page and _marked owns it.
+                for hotkey, what in (("\\", "drawer"), ("m", "mark"), ("z", "zoom"),
+                                     ("f", "fold"), ("?", "keys")):
+                    with ui.element("b"):
+                        ui.label(hotkey)
+                    ui.label(what)
+            clock = ui.label("").classes("sl-clock")
     # Windows live here whenever they are off the wall. Parking them rather than
     # deleting them is what lets scope and zoom be reversible for free, and it is
     # what makes wall.clear() safe: clearing a column deletes what is inside it.
@@ -482,6 +602,12 @@ def main(port):
 
     def on_focus(key):       # replaced in Task 12
         pass
+
+    def on_cols(n):
+        """cols is read from storage per tick, so writing it and re-ticking is the
+        whole handler: layout_key changes and repack() moves the windows."""
+        put("cols", n)
+        tick()
 
     def cycle_sort():        # replaced in Task 12
         pass
@@ -660,7 +786,7 @@ def main(port):
                 windows[key]["el"].move(container, -1)
                 dress(key, windows[key])
 
-    def tick():
+    def poll():
         nonlocal layout
         states = {p.stem: fold_cached(p) for p in sorted(DATA_DIR.glob("*.jsonl"), reverse=True)}
         groups = M.group_sessions(list(states.items()))
@@ -722,6 +848,37 @@ def main(port):
                             (win["ix"], f":{where[k][1]}")):
                 if el.text != txt:
                     el.set_text(txt)
+
+        # The tally counts EVERY session, not just what is on the wall: scope and
+        # zoom are choices about the view, and the tab title and the toast hang
+        # off this element to tell you from another monitor that something needs
+        # you. A number that shrinks because you zoomed would be a lie.
+        tally.set_text(tally_text(sum(g["open_actions"] for g in groups),
+                                  sum(g["open_tasks"] for g in groups)))
+        scope_seg.set_visibility(scope is not None)
+        if scope:
+            scope_label.set_text(f"showing {scope} only")
+        for n, b in col_buttons.items():     # the EFFECTIVE count: zoom forces 1
+            b.classes(replace="sl-c on" if n == cols else "sl-c")
+
+    spin_i = 0
+
+    def tick():
+        """One bad poll degrades the statusline instead of killing the timer.
+        A frozen spinner beside a stale timestamp is the whole watch(1) idiom:
+        liveness you read at a glance rather than an abstract pulse."""
+        nonlocal spin_i
+        try:
+            poll()
+        except Exception:
+            cadence.classes(replace="sl-s sl-stale")
+            return
+        spin_i = (spin_i + 1) % len(SPINNER)
+        spin.set_text(SPINNER[spin_i])
+        now = time.strftime("%H:%M:%S")
+        last_stamp.set_text(now)
+        clock.set_text(now)
+        cadence.classes(replace="sl-s")
 
     def on_query():
         """Dim alone leaves the match off-screen on half of realistic queries with
