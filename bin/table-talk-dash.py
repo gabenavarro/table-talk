@@ -1137,6 +1137,10 @@ def selftest():
     assert code.count('ui.label("int").classes("lb")') == 2, \
         "both actions and jobs hang the plain-English line off the guide, " \
         "labeled the way the --intuitive flag is spelled"
+    assert code.count('theme_btn.props["title"]') == 2, \
+        "the theme toggle names its mode in a tooltip, and CYCLING must " \
+        "refresh it: set once at build and once in cycle_theme, or the " \
+        "tooltip lies about the mode after the first click"
     assert code.index('ui.label("int")') < code.index('for field in ("why", "rec")'), \
         "int reads FIRST: it is the line for someone with no context, and " \
         "why/rec argue a decision that line has to set up"
