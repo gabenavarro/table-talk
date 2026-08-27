@@ -118,6 +118,18 @@ document.addEventListener('click', e => {
 });
 </script>"""
 
+# This dashboard lives on a second monitor: a row that flashes for 900 ms while
+# you are looking at your editor is a change you never saw. So the seen-watermark
+# is advanced by the Page Visibility API, not by a timer - it FREEZES while the
+# tab is hidden, and every row that moved meanwhile keeps its gutter until you
+# are genuinely back. Only the two transitions are sent; the server assumes
+# visible until told otherwise, which is the safe default (no stale gutters).
+VISIBILITY_JS = """<script>
+document.addEventListener('visibilitychange', () => {
+  if (window.emitEvent) emitEvent('tt-seen', document.visibilityState);
+});
+</script>"""
+
 # Every key the page binds. The statusline chips are built from this same dict
 # and dispatch through the same handler, so a key can never do something no
 # click can.
@@ -195,6 +207,13 @@ def done_rows(state):
 def term_rows(state):
     return sorted((e for e in state.values() if e.get("type") == "term"),
                   key=lambda e: e.get("term", "").lower())
+
+
+def changed_ids(state, since):
+    """Ids of actions and tasks that moved after `since`. Terms are reference
+    material - a glossary definition is not a change that needs your attention."""
+    return {str(e["id"]) for e in state.values()
+            if e.get("type") in ("action", "task") and e.get("ts", 0) > since}
 
 
 def _dim(ev, query):
@@ -495,6 +514,18 @@ def selftest():
     assert "e.detail" in BLUR_JS, \
         "Enter/Space on a button synthesise a click with detail 0; blurring that " \
         "throws a keyboard user's focus ring to <body> after every activation"
+    ch = {"a": {"id": "a", "type": "action", "ts": 100},
+          "b": {"id": "b", "type": "task", "ts": 200},
+          "c": {"id": "c", "type": "term", "ts": 300}}
+    assert changed_ids(ch, 150) == {"b"}, "terms never carry a change gutter"
+    assert changed_ids(ch, 0) == {"a", "b"}
+    assert changed_ids(ch, 999) == set(), "a fresh watermark marks nothing"
+    assert changed_ids({}, 0) == set()
+    assert changed_ids({"x": {"id": "x", "type": "action"}}, 0) == set(), \
+        "a row with no ts predates every watermark; it must not mark itself"
+    assert "visibilitychange" in VISIBILITY_JS and "emitEvent" in VISIBILITY_JS
+    assert ".win-b .row.changed{" in css and ".win-b .row.changed-job{" in css, \
+        "gutter colours must differ by kind, and stay scoped off Quasar's .row"
     print("ok")
 
 
@@ -521,6 +552,7 @@ def main(port):
     ui.add_head_html(TAB_TITLE_JS)
     ui.add_head_html(TOAST_JS)
     ui.add_head_html(BLUR_JS)
+    ui.add_head_html(VISIBILITY_JS)
     # the app shell owns the viewport; NiceGUI's page wrapper must not pad it
     ui.query(".nicegui-content").style("padding:0;gap:0;max-width:none")
 
@@ -553,6 +585,25 @@ def main(port):
     needs_me = bool(store("needs_me", False))
     current = store("current", None)   # the window m/z/f act on
     on_wall = []                       # what poll() last put on the wall, in order
+    # Everything newer than seen_ts carries a gutter. Starting it at NOW is what
+    # makes a freshly opened dashboard quiet: a change you were never here for is
+    # not a change you missed. Deliberately not persisted - it is "since you last
+    # looked at this tab", and a reload is you looking.
+    seen_ts = time.time()
+    # ponytail: one server-wide flag, like every other bit of state here - with
+    # two tabs open the hidden one un-freezes the watermark for both. Per-client
+    # tracking if this ever stops being one user on one monitor.
+    watching = True                    # tab visible until the page says otherwise
+
+    def on_seen(e):
+        # NiceGUI hands a single emitEvent argument through unwrapped ('visible'),
+        # not as ['visible'] - and a truth test on the wrong one of those two is
+        # silently always-True, which would kill the whole feature. Carrying the
+        # Page Visibility API's own string and matching it survives either shape.
+        nonlocal watching
+        watching = "visible" in str(e.args)
+
+    ui.on("tt-seen", on_seen)
 
     with ui.element("div").classes("tt-app"):
         shell = ui.element("div").classes("tt-main")
@@ -1018,7 +1069,10 @@ def main(port):
                 dress(key, windows[key])
 
     def poll():
-        nonlocal layout, on_wall
+        nonlocal layout, on_wall, seen_ts
+        # read the clock BEFORE the files: a write that lands between the two
+        # would otherwise be stamped as already seen and never get its gutter
+        now = time.time()
         states = {p.stem: fold_cached(p) for p in sorted(DATA_DIR.glob("*.jsonl"), reverse=True)}
         groups = M.group_sessions(list(states.items()))
         where = {s["key"]: (g["project"], s["index"]) for g in groups for s in g["sessions"]}
@@ -1079,16 +1133,29 @@ def main(port):
 
         for k in visible:
             win = windows[k]
-            sig = (query, newest, states[k])
+            # the gutter set is part of the signature, or the window that must
+            # DROP its gutters never repaints: its data did not change, that is
+            # the whole point of it
+            changed = changed_ids(states[k], seen_ts)
+            sig = (query, newest, states[k], changed)
             if win["sig"] != sig:
                 win["sig"] = sig
-                paint_window(win, k, states[k], newest, query)
+                paint_window(win, k, states[k], newest, query, changed)
             # both advance without the window's own data changing: age with the
             # clock, the tmux index whenever a newer sibling session appears
             for el, txt in ((win["when"], ago(win["latest"]) if win["latest"] else ""),
                             (win["ix"], f":{where[k][1]}")):
                 if el.text != txt:
                     el.set_text(txt)
+        # Only now, and only if you are actually looking, does what we just drew
+        # count as seen. Hidden, this line never runs and the gutters pile up.
+        # int(now) - 1, not now: bin/table-talk stamps ts in WHOLE seconds, so an
+        # event written at 100.9 carries ts=100 and a float watermark of 100.3
+        # would mark it already-seen. One second back is the newest watermark
+        # that cannot swallow a change - it costs a redundant gutter for one poll
+        # and never a missed one.
+        if watching:
+            seen_ts = int(now) - 1
 
         # The tally counts EVERY session, not just what is on the wall: scope and
         # zoom are choices about the view, and the tab title and the toast hang
