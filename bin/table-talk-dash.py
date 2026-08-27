@@ -7,20 +7,52 @@
 import argparse
 import json
 import logging
+import subprocess
+import sys
 import time
 from datetime import datetime
 from pathlib import Path
 
+import tt_config
 import tt_model as M
 from tt_model import DATA_DIR, fold_cached
 
 CSS_PATH = Path(__file__).resolve().parent / "tt.css"
+
+# The loaded config, reachable from a row renderer and from a click handler that
+# outlives the render. main() replaces it; threading it through six row
+# signatures to reach one <button> buys nothing - the process has one config.
+CFG = tt_config.DEFAULTS
 
 
 def load_css():
     """The stylesheet lives beside the script so it can be edited as CSS.
     Read at startup; a missing file is a broken install, not a runtime path."""
     return CSS_PATH.read_text()
+
+
+def theme_css(theme):
+    """The config's palette as one stylesheet, holding only the tokens that
+    DIFFER from tt.css's own. An unset token emits nothing and inherits - a
+    restatement of the default is a second place to change it.
+
+    :root carries the light palette and body.body--dark the dark one, exactly as
+    tt.css orders them, so this block simply has to come after it.
+
+    Every value is re-checked with valid_colour HERE, at the point of emission:
+    load() validates on the way in, this validates on the way out, and a config
+    file is a second untrusted route into the stylesheet. The comprehension runs
+    over the DEFAULTS keys rather than the file's, so a token NAME out of the
+    file is only ever matched, never interpolated.
+    """
+    def block(sel, mode):
+        base = tt_config.DEFAULTS["theme"][mode]
+        got = theme.get(mode) or {}
+        decls = "".join(f"--{k}:{got[k]};" for k in base
+                        if k in got and got[k] != base[k] and tt_config.valid_colour(got[k]))
+        return f"{sel}{{{decls}}}" if decls else ""
+
+    return block(":root", "light") + block("body.body--dark", "dark")
 
 
 # Ids hand you the command: one delegated listener, no server round-trip.
@@ -136,25 +168,52 @@ document.addEventListener('click', e => {
 });
 </script>"""
 
-# This dashboard lives on a second monitor: a row that flashes for 900 ms while
-# you are looking at your editor is a change you never saw. So the seen-watermark
-# is advanced by the Page Visibility API, not by a timer - it FREEZES while the
-# tab is hidden, and every row that moved meanwhile keeps its gutter until you
-# are genuinely back.
+# A row that flashes while you are looking at your editor is a change you never
+# saw, so the seen-watermark is advanced by INTERACTION - a click, a keypress or
+# a scroll - and by nothing else.
 #
-# The state is announced ONCE at startup as well as on every transition. A tab
-# that was already hidden when it loaded - session restore, opened in the
-# background, reloaded from another tab - fires no visibilitychange, ever, and
-# without the announcement the server would assume it is being watched and clear
-# gutters nobody saw. The retry is for the Vue root: emitEvent needs it mounted,
-# and NiceGUI queues the message itself until the socket handshake.
-VISIBILITY_JS = """<script>
+# It used to be advanced by the Page Visibility API, which cannot carry this on
+# its own: that API reports tab BACKGROUNDING only. It cannot see a covered
+# window and it has no idea which monitor you are looking at. This dashboard's
+# deployment is a second monitor that is permanently on screen, where
+# document.hidden is therefore never true - measured there, a gutter appeared on
+# one poll and was gone on the next (1.0s of an 8s untouched window at a 1s
+# cadence), which is exactly the fleeting flash the gutter exists to replace.
+# Interaction is the only signal that proves a human looked. Returning to a
+# genuinely backgrounded tab stays as a second signal: it is real when it fires,
+# it just never fires on the wall.
+#
+# Capture phase because a scroll inside the wall does not bubble to document.
+# The throttle is because a scroll fires per frame and every call is one socket
+# message for a mark that is idempotent. The retry is for the Vue root:
+# emitEvent needs it mounted, and NiceGUI queues the message itself until the
+# socket handshake.
+SEEN_JS = """<script>
+let ttLast = 0;
 const ttSeen = () => {
-  try { emitEvent('tt-seen', document.visibilityState); }
+  if (Date.now() - ttLast < 300) return;
+  try { emitEvent('tt-seen', 1); ttLast = Date.now(); }
   catch (e) { setTimeout(ttSeen, 200); }
 };
-document.addEventListener('visibilitychange', ttSeen);
-ttSeen();
+for (const t of ['click', 'keydown', 'scroll']) document.addEventListener(t, ttSeen, true);
+document.addEventListener('visibilitychange', () => { if (!document.hidden) ttSeen(); });
+</script>"""
+
+# The wall's own width, announced by the page, because the server cannot read the
+# viewport (see WALL_WIDTH). A ResizeObserver rather than a resize listener: it
+# fires ONCE on observe, so the first width arrives without a resize ever
+# happening, and it also catches the drawer collapsing, which changes the wall's
+# width without changing the window's. The retry is for the wall element itself -
+# NiceGUI has not mounted the Vue root when this script parses.
+WIDTH_JS = """<script>
+const ttWall = () => {
+  const el = document.querySelector('.wall');
+  if (!el) return setTimeout(ttWall, 200);
+  new ResizeObserver(() => {
+    try { emitEvent('tt-width', el.clientWidth); } catch (e) { /* not mounted yet */ }
+  }).observe(el);
+};
+ttWall();
 </script>"""
 
 # Every key the page binds. The statusline chips are built from this same dict
@@ -190,14 +249,18 @@ GUIDES = {"open": "▾", "closed": "▸", "mid": "├", "last": "└", "line": "
 MAX_CELLS = 20     # a long session must not wreck the footer line
 BAR_CELLS = 14
 
-# The width default_cols() assumes until someone picks a column count. The real
-# viewport cannot be read from the server: the only hook that fires per client,
-# app.on_connect, runs in a context where this page's elements are unreachable
-# (verified against NiceGUI 3.16 - client.elements reads empty there and move()
-# raises "the parent slot has been deleted"), and main()'s closure runs twice per
-# process with only the second one live, so the connect handler cannot even reach
-# the live tick. cols 1|2|3 in the statusline is the deliberate override.
+# The width assumed until the page announces its own. The real viewport cannot be
+# read from the server: the only hook that fires per client, app.on_connect, runs
+# in a context where this page's elements are unreachable (verified against
+# NiceGUI 3.16 - client.elements reads empty there and move() raises "the parent
+# slot has been deleted"), and main()'s closure runs twice per process with only
+# the second one live, so the connect handler cannot even reach the live tick.
+# WIDTH_JS reports it from the client side instead, and cols 1|2|3 in the
+# statusline stays the deliberate override.
 WALL_WIDTH = 1400
+# Below this the wall packs ONE column whatever the preference says: three columns
+# of a 600px wall are 190px each, which is two or three words a line.
+NARROW = 900
 
 
 def blocks(pct, cells=BAR_CELLS):
@@ -274,20 +337,122 @@ def _marked(text, query, cls=None):
     return el.classes(cls) if cls else el
 
 
+def link_roots(cfg):
+    """Where a path found in a log line is allowed to point: the data dir, the
+    project dir the server was started in, and whatever links.extra_roots adds.
+
+    Absolute, because path_spans resolves a relative token against the process
+    CWD - the same CWD this list names, so the two agree by construction.
+    Non-string entries are dropped rather than handed to Path(): extra_roots
+    comes out of a TOML file and _merge only checks that the LIST is a list.
+    """
+    return [DATA_DIR.resolve(), Path.cwd(),
+            *(Path(r).expanduser() for r in cfg["links"]["extra_roots"] if isinstance(r, str))]
+
+
+def open_path(path, cfg, run=subprocess.Popen, extra_roots=()):
+    """Open one path in the configured command, re-deriving confinement HERE.
+
+    The string arrives from a click on markup built out of a log file, so it is
+    put back through path_spans - the same gate the link was rendered through -
+    and only a string that is exactly its own resolved, in-root self survives.
+    Nothing about the click is trusted, so a payload that was tampered with is
+    no different from a log line that never should have linked.
+
+    extra_roots widens the check for ONE call without touching link_roots (and
+    so without widening every other link on the wall): the drawer footer hands
+    back the exact path it resolved for itself, never one out of a log line, so
+    re-deriving confinement against that single path grants exactly that file
+    and nothing beside it.
+
+    The command is an argv LIST and never shell=True: that is the whole reason a
+    file called 'a;b.md' stays a filename. A click that fails the check does
+    nothing at all, and a command that is not installed is not a crash.
+    """
+    spans = M.path_spans(path, [*link_roots(cfg), *extra_roots])
+    if len(spans) != 1 or spans[0][2] != path:
+        return
+    try:
+        run([cfg["links"]["open_command"], path])
+    except OSError as e:
+        print(f"table-talk: could not open {path!r}: {e}", file=sys.stderr)
+
+
+def nearest_claude_md(start, home):
+    """The closest CLAUDE.md found walking up from `start`, or None.
+
+    Never inspects anything above `home`: a dashboard started outside the
+    user's own tree must not surface someone else's CLAUDE.md living further
+    up the disk. Both paths are resolved before comparison, so a symlinked
+    `start` that resolves outside home's tree is refused outright rather than
+    walked - the same "resolve, then confine" rule path_spans uses.
+    """
+    cur = Path(start).resolve()
+    home = Path(home).resolve()
+    try:
+        cur.relative_to(home)
+    except ValueError:
+        return None
+    while True:
+        hit = cur / "CLAUDE.md"
+        if hit.is_file():
+            return hit
+        if cur == home:
+            return None
+        cur = cur.parent
+
+
+def _cell(text, query, cls=None):
+    """One cell of user text: the query highlighted, and any path resolving to a
+    real file inside link_roots rendered as a button that opens it.
+
+    One walk over both span lists rather than a second renderer - the text
+    between paths goes through _marked exactly as before, so a cell carries a
+    highlight and a link at once and every run is still escaped AFTER the split.
+    The path reaches the DOM through the props dict, never a .props() string.
+
+    The runs share one box because this cell's slot is a flex item in .ttl and a
+    grid cell in .sub: loose siblings there become layout items and the sentence
+    comes apart.
+    """
+    from nicegui import ui
+    text = text or ""
+    spans = M.path_spans(text, link_roots(CFG))
+    if not spans:
+        return _marked(text, query, cls)
+    box = ui.element("span").classes(f"lk-p {cls}" if cls else "lk-p")
+    with box:
+        i = 0
+        for start, end, resolved in spans:
+            if start > i:
+                _marked(text[i:start], query)
+            btn = ui.element("button").classes("lk")
+            btn.props["data-path"] = resolved
+            btn.props["title"] = f"open {resolved}"
+            with btn:
+                _marked(text[start:end], query)
+            btn.on("click", lambda _, p=resolved: open_path(p, CFG))
+            i = end
+        if i < len(text):
+            _marked(text[i:], query)
+    return box
+
+
 def _action_row(ev, blink, query, changed):
     from nicegui import ui
     with ui.element("div").classes(("row changed" if changed else "row") + _dim(ev, query)):
         _id_button(ev, "id-act")
         with ui.element("div"):
             with ui.element("div").classes("ttl"):
-                _marked(ev.get("background", ""), query)
+                _cell(ev.get("background", ""), query)
                 if blink:   # exactly one cursor on the page: the newest thing waiting on you
                     ui.label("▉").classes("cursor")
-            for glyph, label, field in (("├─", "why", "why"), ("└─", "rec", "rec")):
+            # no guide glyph: .sub draws the whole tree guide as one rule, because
+            # a per-row ├/└ came apart the moment `why` wrapped past one line
+            for field in ("why", "rec"):
                 with ui.element("div").classes("sub"):
-                    ui.label(glyph).classes("gd")
-                    ui.label(label).classes("lb")
-                    _marked(ev.get(field, ""), query)
+                    ui.label(field).classes("lb")
+                    _cell(ev.get(field, ""), query)
 
 
 def _task_row(ev, query, changed):
@@ -295,7 +460,7 @@ def _task_row(ev, query, changed):
     with ui.element("div").classes(("row changed-job" if changed else "row") + _dim(ev, query)):
         _id_button(ev, "id-job")
         with ui.element("div"):
-            _marked(ev.get("what", ""), query, "ttl")
+            _cell(ev.get("what", ""), query, "ttl")
             text = ev.get("progress", "")
             pct = M.percent(text)
             with ui.element("div").classes("meter"):
@@ -310,7 +475,7 @@ def _task_row(ev, query, changed):
                         ui.label(empty).classes("e")
                     ui.label(f"{pct}%").classes("pct")
                 if text:
-                    _marked(text, query, "raw")
+                    _cell(text, query, "raw")
 
 
 def _term_row(ev, query):
@@ -318,11 +483,10 @@ def _term_row(ev, query):
     with ui.element("div").classes("row" + _dim(ev, query)):
         ui.label(ev.get("term", "")).classes("id id-gls")
         with ui.element("div"):
-            _marked(ev.get("intuitive", ""), query, "ttl")
+            _cell(ev.get("intuitive", ""), query, "ttl")
             with ui.element("div").classes("sub"):
-                ui.label("└─").classes("gd")
                 ui.label("def").classes("lb")
-                _marked(ev.get("technical", ""), query)
+                _cell(ev.get("technical", ""), query)
 
 
 def _done_row(ev, query):
@@ -331,7 +495,7 @@ def _done_row(ev, query):
     from nicegui import ui
     with ui.element("div").classes("row" + _dim(ev, query)):
         _id_button(ev, "id-ok")
-        _marked(ev.get("background") or ev.get("what", ""), query, "ttl")
+        _cell(ev.get("background") or ev.get("what", ""), query, "ttl")
 
 
 def _hits(evs, query):
@@ -375,7 +539,7 @@ def _prompt(cls, title, count, toggles=None, opened=None, key="", force=False):
     line.on("click", flip)
 
 
-def render_window_body(container, state, newest_action_id, query="", changed=()):
+def render_window_body(container, state, newest_action_id, query="", changed=(), collapsed=()):
     """Rebuild one window's body.
 
     A window holds a handful of rows, so rebuilding it is cheaper and far
@@ -389,12 +553,15 @@ def render_window_body(container, state, newest_action_id, query="", changed=())
 
     Which sections the user has expanded is kept on the container, which
     outlives the rebuild, so a poll cannot snap an open panel shut underneath a
-    reader. It dies with the container, so nothing has to clean it up.
+    reader. It dies with the container, so nothing has to clean it up. Which
+    ones START shut is ui.collapsed_sections, named the way the config names
+    them - the user's choice from then on outranks the file.
     """
     from nicegui import ui
     opened = getattr(container, "tt_open", None)
     if opened is None:
-        opened = container.tt_open = {"gls": False, "ok": False}
+        opened = container.tt_open = {"gls": "glossary" not in collapsed,
+                                      "ok": "done" not in collapsed}
     container.clear()
     with container:
         acts = open_rows(state, "action")
@@ -444,6 +611,14 @@ def default_cols(width):
     return 3 if width >= 1800 else (2 if width >= 1200 else 1)
 
 
+def cols_for(width, pref):
+    """How many columns a wall this wide gets. The stored preference is a MAXIMUM,
+    never a mandate: a window narrowed to a laptop half-screen packs one column
+    even with 3 chosen, and gets its 3 back when the window grows. pref 0 is
+    'auto', which is what `or` reads it as."""
+    return 1 if width < NARROW else (pref or default_cols(width))
+
+
 def layout_key(visible, cols, marks, folds, zoomed, scope, sort, drawer_open):
     """Everything that changes WHERE a window sits. The wall re-packs when this
     changes and at no other time - never on a poll that only changed text."""
@@ -452,6 +627,7 @@ def layout_key(visible, cols, marks, folds, zoomed, scope, sort, drawer_open):
 
 
 def selftest():
+    import tempfile
     # fold/fold_cached now live in tt_model and are pinned by its own selftest.
     st = {"a": {"id": "a", "type": "action", "status": "open", "background": "bg", "ts": 1},
           "b": {"id": "b", "type": "action", "status": "done", "background": "old", "ts": 2},
@@ -472,14 +648,66 @@ def selftest():
     # both palettes, keyed the way the design spec pins them
     assert "--bg:#1d2021" in css and "--surface:#282828" in css, "gruvbox-dark ground and surface"
     assert "--bg:#e8e6dc" in css and "--surface:#faf9f5" in css, "claude-code-light ground and surface"
-    assert "--caret:#8ec07c" in css and "--caret:#d97757" in css, "cursor colour per theme"
+    # light's caret is claude-code-light's #d97757 darkened to clear 4.5:1 on --hover
+    assert "--caret:#8ec07c" in css and "--caret:#c4512c" in css, "cursor colour per theme"
     assert "--act:#fb4934" in css and "--act:#a53a2e" in css
     assert "body.body--dark" in css, "dark palette must key off Quasar's body--dark"
     assert "tabular-nums" in css, "digit columns must align"
     assert "prefers-reduced-motion" in css, "motion must be defeatable"
     assert "ui-monospace" in css and "system-ui" in css, "both faces need a real fallback stack"
     assert "--ctp-" not in css, "the Catppuccin palette is gone"
+    # hover moves AWAY from the text, which is a different direction per theme
+    assert "--hover:#ffffff" in css and "--hover:#191b1c" in css, \
+        "both palettes need a --hover, and light lightens where dark darkens"
+    for rule in (".dw-row:hover", ".rail-item:hover", ".win-b .row:hover", ".dw-fold:hover"):
+        decl = css.split(rule + "{")[1].split("}")[0]
+        assert "var(--sel)" not in decl and "var(--hover)" in decl, \
+            f"{rule} must use --hover: --sel is the SELECTED colour and in dark it " \
+            "LIGHTENS the row you are reading, which is the whole bug"
+    sub = css.split(".sub{")[1].split("}")[0]
+    row = css.split(".win-b .row{")[1].split("}")[0]
+    assert "overflow-wrap:anywhere" in row, \
+        "a prose cell must break a long path rather than push the card wider than the wall"
+    assert "nowrap" not in row and "nowrap" not in sub, \
+        "nothing in a prose cell may refuse to wrap"
+    assert ".win-b .row>*{min-width:0}" in css, \
+        "a grid item's automatic minimum is min-content, which overflows the track"
+    assert ".sub::before" in css and ".sub:last-child::before" in css, \
+        "the tree guide is one continuous RULE with a corner on the last sub-line: " \
+        "drawn as a ├/└ glyph per row it broke open the moment `why` wrapped"
+    assert "position:relative" in sub, "the guide is absolutely positioned against .sub"
     assert set(THEME_ICONS) == set(THEME_MODES)
+
+    # theme_css: the config is a second untrusted route into the stylesheet, and
+    # the only pure function on that route. Every value below is one a TOML file
+    # can carry - the emitter is not allowed to trust that load() cleaned it.
+    assert theme_css(tt_config.DEFAULTS["theme"]) == "", \
+        "a palette equal to the stylesheet's emits NOTHING: inherit, never restate"
+    assert theme_css({}) == "" and theme_css({"dark": {}, "light": {}}) == ""
+    assert theme_css({"dark": {"bg": "#ff00ff"}}) == "body.body--dark{--bg:#ff00ff;}", \
+        "body.body--dark carries the dark palette, exactly as tt.css orders it"
+    assert theme_css({"light": {"bg": "#ff00ff"}}) == ":root{--bg:#ff00ff;}", \
+        ":root carries the LIGHT palette - tt.css puts light in :root, not dark"
+    assert theme_css({"light": {"bg": "#ff00ff"}, "dark": {"ink": "#010203"}}) == \
+        ":root{--bg:#ff00ff;}body.body--dark{--ink:#010203;}", "light first, then dark"
+    assert theme_css({"dark": {"bg": tt_config.DEFAULTS["theme"]["dark"]["bg"],
+                               "ink": "#010203"}}) == "body.body--dark{--ink:#010203;}", \
+        "only the tokens that DIFFER are emitted; a matching sibling emits nothing"
+    for hostile in ("#fff;}body{display:none", "red", "", "url(x)", None, 0, ["#fff"]):
+        assert theme_css({"dark": {"bg": hostile}}) == "", \
+            f"{hostile!r} is not a hex colour and must never reach the stylesheet"
+    assert theme_css({"dark": {"x;}body{display:none": "#ff00ff"}}) == "", \
+        "a token NAME out of the file is matched against DEFAULTS, never interpolated"
+    with tempfile.TemporaryDirectory() as td:
+        p = Path(td) / "c.toml"
+        p.write_text("[server]\nport = 9\n")
+        assert theme_css(tt_config.load(p)["theme"]) == "", \
+            "a config with no [theme] section emits no override block at all"
+        p.write_text('[theme.dark]\nbg = "#ff00ff"\n')
+        assert theme_css(tt_config.load(p)["theme"]) == "body.body--dark{--bg:#ff00ff;}"
+        p.write_text('[theme.dark]\nbg = "#fff;}body{display:none"\n')
+        assert theme_css(tt_config.load(p)["theme"]) == "", \
+            "an invalid colour is dropped on the way in AND on the way out"
     assert ago(0, now=30) == "just now" and ago(0, now=90) == "1m ago"
     assert ago(0, now=7200) == "2h ago" and ago(0, now=200000) == "2d ago"
     assert blocks(0, 10) == ("", "░░░░░░░░░░")
@@ -501,6 +729,16 @@ def selftest():
     assert ".tt-dim" in css and ".tt-hit" in css, "dim and highlight need styles to mean anything"
     assert ".dw-find" in css and ".tt-none" in css, "the filter bar and empty wall need styles"
     assert default_cols(2000) == 3 and default_cols(1400) == 2 and default_cols(800) == 1
+    assert cols_for(700, 3) == 1 and cols_for(899, 3) == 1, \
+        "the stored cols is a MAXIMUM: a narrow wall packs one column whatever it says"
+    assert cols_for(1280, 3) == 3 and cols_for(1920, 3) == 3, \
+        "and the preference comes straight back when the window is wide again"
+    assert cols_for(2000, 0) == 3 and cols_for(1300, 0) == 2 and cols_for(700, 0) == 1, \
+        "0 is auto and still clamps"
+    assert "ResizeObserver" in WIDTH_JS and "emitEvent('tt-width'" in WIDTH_JS, \
+        "the wall's width can only come from the client; the server cannot read it"
+    assert "clientWidth" in WIDTH_JS, \
+        "the WALL's width, not the window's: collapsing the drawer changes one and not the other"
     a = layout_key(["x", "y"], 2, {"x"}, set(), None, None, "recent", True)
     b = layout_key(["x", "y"], 2, {"x"}, set(), None, None, "recent", True)
     assert a == b, "identical state must produce an identical key, so no needless re-pack"
@@ -578,10 +816,14 @@ def selftest():
         "the key round-trips as a JS string literal, quotes and all"
     for hostile in ('a"b', "it's", "a\"'b", "back\\slash", "</script>"):
         assert json.loads(scroll_js(hostile).split("const k=")[1].split(";")[0]) == hostile
-    assert "visibilitychange" in VISIBILITY_JS and "emitEvent" in VISIBILITY_JS
-    assert "\nttSeen();" in VISIBILITY_JS, \
-        "a tab that was ALREADY hidden when it loaded fires no visibilitychange " \
-        "ever, so the state must also be announced once at startup"
+    assert "emitEvent" in SEEN_JS
+    for ev in ("click", "keydown", "scroll"):
+        assert f"'{ev}'" in SEEN_JS, \
+            f"the gutter clears on INTERACTION: without a {ev} listener this " \
+            "dashboard - permanently visible on a second monitor, where " \
+            "document.hidden is never true - marks rows seen that nobody looked at"
+    assert "visibilitychange" in SEEN_JS, \
+        "returning to a backgrounded tab stays a second signal, not the only one"
     assert ".win-b .row.changed{" in css and ".win-b .row.changed-job{" in css, \
         "gutter colours must differ by kind, and stay scoped off Quasar's .row"
     cur = css.split(".win.cur>.win-t{")[1].split("}")[0]
@@ -590,6 +832,79 @@ def selftest():
         "--sel outright is ~2.9x the luminance the glyphs were chosen against " \
         "and drops the ! bell to 1.89:1, and target() marks a window .cur on the " \
         "very first paint, so nobody has to click anything to hit it"
+
+    # links: the click handler hands a string that came out of a LOG FILE to a
+    # process launcher, so both halves of that are pinned here.
+    assert link_roots({"links": {"extra_roots": []}}) == [DATA_DIR.resolve(), Path.cwd()], \
+        "the roots are the data dir and the cwd project dir, in that order"
+    assert link_roots({"links": {"extra_roots": ["/srv/x"]}})[2:] == [Path("/srv/x")], \
+        "links.extra_roots is appended to the two implicit roots"
+    assert link_roots({"links": {"extra_roots": [1, None, {"a": 1}, "/srv/x"]}})[2:] == \
+        [Path("/srv/x")], "a non-string extra root is dropped, never handed to Path()"
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td) / "proj"
+        root.mkdir()
+        real = root / "notes.md"
+        real.write_text("x")
+        evil = root / "a;b&`id`.md"       # a filename, and it must stay one
+        evil.write_text("x")
+        outside = Path(td) / "secret.md"
+        outside.write_text("x")
+        cfg = {"links": {"open_command": "ed", "extra_roots": [str(root)]}}
+        argv = []
+
+        def run(cmd, **kw):
+            assert isinstance(cmd, list), f"the command must be an argv LIST, got {type(cmd)}"
+            assert kw == {}, f"no shell=True, ever: {kw}"
+            argv.append(cmd)
+
+        open_path(str(real), cfg, run)
+        assert argv == [["ed", str(real)]], "an in-root file opens with a two-element argv"
+        argv.clear()
+        open_path(str(evil), cfg, run)
+        assert argv == [["ed", str(evil)]] and argv[0][1] == str(evil), \
+            "a shell metacharacter in a FILENAME reaches argv as one intact element"
+        argv.clear()
+        for hostile in (str(outside), str(root / "missing.md"), str(root), "/etc/passwd",
+                        f"{real} ; rm -rf /", f"x{real}", f"{real}\x00", "", None,
+                        str(root / ".." / outside.name)):
+            open_path(hostile, cfg, run)
+            assert argv == [], f"{hostile!r} must never reach the launcher"
+        open_path(str(real), {"links": {"open_command": "ed", "extra_roots": []}}, run)
+        assert argv == [], "with the root gone from the config, the same path is refused"
+
+        def boom(cmd, **kw):
+            raise FileNotFoundError(cmd[0])
+
+        open_path(str(real), cfg, boom)   # an open_command that is not installed is not a crash
+    assert ".lk-p" in css and ".lk{" in css, \
+        "a link run needs its styles, and the inline rule is what keeps a cell one sentence"
+
+    # nearest_claude_md: the drawer-footer discovery helper
+    with tempfile.TemporaryDirectory() as td:
+        above = Path(td)
+        home = above / "home"
+        proj = home / "a" / "proj"
+        sub = proj / "sub"
+        sub.mkdir(parents=True)
+        (above / "CLAUDE.md").write_text("above home")
+        assert nearest_claude_md(sub, home) is None, \
+            "nothing under home has one yet; the one ABOVE home must not be found"
+        (home / "CLAUDE.md").write_text("home")
+        assert nearest_claude_md(sub, home) == home / "CLAUDE.md", \
+            "walks all the way up to home when nothing closer exists"
+        (proj / "CLAUDE.md").write_text("proj")
+        assert nearest_claude_md(sub, home) == proj / "CLAUDE.md", \
+            "the nearest one wins once something closer than home exists"
+        assert nearest_claude_md(proj, home) == proj / "CLAUDE.md", \
+            "the starting directory itself containing one is found immediately"
+        outside = above / "outside"
+        outside.mkdir()
+        (outside / "CLAUDE.md").write_text("outside")
+        link = proj / "link"
+        link.symlink_to(outside)
+        assert nearest_claude_md(link, home) is None, \
+            "a symlink whose target resolves outside home's tree is not followed"
 
     # Everything below reads this file as text: these are properties of the
     # SOURCE, and every one of them is a bug that shipped once already.
@@ -619,6 +934,17 @@ def selftest():
         "never reaches the DOM and click-to-scroll has nothing to find"
     assert 'btn.props["data-id"] = str(ev["id"])' in code, \
         "the id button's data-id prop must be ASSIGNED; COPY_JS reads it"
+    assert 'btn.props["data-path"] = resolved' in code, \
+        "the link button's path must be ASSIGNED too - a .props() string is parsed"
+    sh = [n.lineno for n in ast.walk(ast.parse(src))
+          if isinstance(n, ast.Call) and any(k.arg == "shell" for k in n.keywords)]
+    assert not sh, (
+        f"a shell= keyword at line(s) {sh}. The open command is handed a path "
+        "that came out of a log file: the argv list is the whole defence, and "
+        "prose in a docstring cannot satisfy this check")
+    assert code.count("ui.html(") == 1, \
+        "exactly one ui.html call, fed only by tt_model.marked: a link is built out " \
+        "of ui.label runs and a real <button>, never out of markup"
     assert "ui.run_javascript(scroll_js(key))" in code, \
         "on_focus must go through scroll_js, which hands the key to JS as a " \
         "json.dumps LITERAL. Spliced into a selector, --project \"y'+alert(9)+'z\" " \
@@ -628,6 +954,14 @@ def selftest():
         "exception mid-build marks a half-drawn window current forever"
     assert code.index('srow.on("click"') < code.index("container.tt_sig = sig"), \
         "same for the drawer: its signature is recorded after the tree is built"
+    assert code.index("<style>{load_css()}</style>") < code.index('theme_css(cfg["theme"])'), \
+        "the config's palette must be added AFTER tt.css: same specificity, so " \
+        "the later block is the only reason it wins"
+    assert 'port = cfg["server"]["port"] if port is None else port' in code, \
+        "the config is the DEFAULT port; an explicit --port still wins"
+    assert '"gls": "glossary" not in collapsed' in code and '"ok": "done" not in collapsed' in code, \
+        "ui.collapsed_sections names sections the way the config does; the two " \
+        "internal keys are gls and ok"
     assert "not toggles.visible" in code, \
         "_prompt's flip must toggle against the LIVE visibility - `force` and " \
         "`shown` are constants captured for the render, so a filter-forced " \
@@ -650,15 +984,25 @@ def stamp(ts):
     return datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M:%S")
 
 
-def main(port):
+def main(port=None):
     from nicegui import app, ui
 
+    # One dict, read where it is needed. A missing or malformed file yields the
+    # defaults, so nothing below has to think about that.
+    global CFG
+    cfg = CFG = tt_config.load()
+    port = cfg["server"]["port"] if port is None else port   # an explicit --port wins
+    poll_seconds = cfg["server"]["poll_seconds"]
+
     ui.add_head_html(f"<style>{load_css()}</style>")
+    if (over := theme_css(cfg["theme"])):     # AFTER tt.css, or it overrides nothing
+        ui.add_head_html(f"<style>{over}</style>")
     ui.add_head_html(COPY_JS)
     ui.add_head_html(TAB_TITLE_JS)
     ui.add_head_html(TOAST_JS)
     ui.add_head_html(BLUR_JS)
-    ui.add_head_html(VISIBILITY_JS)
+    ui.add_head_html(SEEN_JS)
+    ui.add_head_html(WIDTH_JS)
     # the app shell owns the viewport; NiceGUI's page wrapper must not pad it
     ui.query(".nicegui-content").style("padding:0;gap:0;max-width:none")
 
@@ -671,7 +1015,7 @@ def main(port):
         app.storage.general[f"tt.{key}"] = value
 
     dark = ui.dark_mode()
-    mode = store("theme", "system")
+    mode = store("theme", cfg["theme"]["default"])
     if mode not in THEME_MODES:  # a hand-edited/stale storage value must not crash startup
         mode = "system"
 
@@ -693,25 +1037,43 @@ def main(port):
     on_wall = []                       # what poll() last put on the wall, in order
     # Everything newer than a window's watermark carries a gutter. Per WINDOW,
     # not one for the page: a window off the wall (zoom, scope, needs-me) is one
-    # you could not have seen, so its watermark stands still until it is back and
-    # you have had a poll to look at it. The floor is NOW, which is what makes a
+    # you could not have seen, so its watermark stands still until it is back on
+    # the wall AND you have touched the page since. The floor is NOW, which is what makes a
     # freshly opened dashboard quiet - a change you were never here for is not a
     # change you missed. Deliberately not persisted: the watermark means "since
     # you last looked", and a reload is you looking.
     opened_ts = time.time()
     seen_at = {}                       # session key -> when its rows were last on screen
     # Not shared between tabs: NiceGUI gives each client its own run of this
-    # function, so two dashboards keep independent watermarks (measured - a
-    # hidden tab held its gutter while a visible one cleared its own).
-    watching = True                    # tab visible until the page says otherwise
+    # function, so two dashboards keep independent watermarks (measured - of two
+    # tabs open at once, the one that was clicked cleared its own gutter and the
+    # untouched one kept its).
+    touched = False                    # SEEN_JS saw a click/keypress/scroll; poll() consumes it
+    wall_width = WALL_WIDTH            # until WIDTH_JS says otherwise
+
+    def on_width(e):
+        """The wall's width, straight off the client. Deliberately NOT persisted:
+        it is a property of this window, not a preference, and two tabs at
+        different widths must not overwrite each other's column count.
+        A tick only when the CLAMP flips - a ResizeObserver fires on every frame
+        of a drag, and re-polling every file for a width that changes nothing
+        about the layout is the one thing this must not do."""
+        nonlocal wall_width
+        try:
+            w = int(float(str(e.args).strip("[]")))
+        except (TypeError, ValueError):        # a hand-crafted event, not the page
+            return
+        was, wall_width = wall_width, w
+        if (w < NARROW) != (was < NARROW):
+            tick()
+
+    ui.on("tt-width", on_width)
 
     def on_seen(e):
-        # NiceGUI hands a single emitEvent argument through unwrapped ('visible'),
-        # not as ['visible'] - and a truth test on the wrong one of those two is
-        # silently always-True, which would kill the whole feature. Carrying the
-        # Page Visibility API's own string and matching it survives either shape.
-        nonlocal watching
-        watching = "visible" in str(e.args)
+        # A latch, not a state: SEEN_JS only ever fires this when a human touched
+        # the page, so the argument carries nothing and is deliberately ignored.
+        nonlocal touched
+        touched = True
 
     ui.on("tt-seen", on_seen)
 
@@ -724,12 +1086,44 @@ def main(port):
                 # "nothing matched" and "your match is 600 px below" look identical.
                 with ui.element("div").classes("dw-find"):
                     search = ui.input(placeholder="filter").props(
-                        "clearable dense borderless debounce=100").classes("dw-in")
+                        "clearable dense borderless").classes("dw-in")
+                    # dict form, never the props STRING: see build_window
+                    search.props["debounce"] = cfg["ui"]["filter_debounce_ms"]
                     hits = ui.label("").classes("dw-count")
                     theme_btn = ui.element("button").classes("dw-theme")
                     with theme_btn:
                         theme_lbl = ui.label(THEME_ICONS[mode])
                 drawer = ui.element("div").classes("dw-tree")   # Task 10 renders here
+                # Context files at known locations, not ones found in log text -
+                # built once, like .dw-find above, never rebuilt by a poll. Absent
+                # entirely when nothing exists: an always-there-but-empty footer
+                # is worse than no footer.
+                ctx = []
+                nearest = nearest_claude_md(Path.cwd(), Path.home())
+                if nearest:
+                    ctx.append(("CLAUDE.md", nearest))
+                home_claude = Path.home() / ".claude" / "CLAUDE.md"
+                if home_claude.is_file():
+                    ctx.append(("~/.claude/CLAUDE.md", home_claude))
+                # The session-memory directory is a DIRECTORY; path_spans only
+                # ever returns files. Rather than teach it (or open_path)
+                # directories, link the representative MEMORY.md inside it - the
+                # memory tool that populates the directory always writes one
+                # alongside the rest, so this is the file a user actually wants.
+                mem_file = (Path.home() / ".claude" / "projects" /
+                            str(Path.cwd()).replace("/", "-") / "memory" / "MEMORY.md")
+                if mem_file.is_file():
+                    ctx.append(("memory", mem_file))
+                if ctx:
+                    with ui.element("div").classes("dw-ctx"):
+                        for label, p in ctx:
+                            p = str(p.resolve())
+                            btn = ui.element("button").classes("lk dw-ctx-i")
+                            btn.props["data-path"] = p
+                            btn.props["title"] = f"open {p}"
+                            with btn:
+                                ui.label(label)
+                            btn.on("click", lambda _, pp=p: open_path(pp, cfg, extra_roots=(pp,)))
             wall = ui.element("div").classes("wall")
         # The statusline: a sibling BELOW .tt-main, not inside it, so the drawer
         # and the wall both stop 28 px short of the floor and it spans the lot.
@@ -741,7 +1135,7 @@ def main(port):
                 ui.label("table-talk")
             cadence = ui.element("div").classes("sl-s")
             with cadence:
-                ui.label("Every 2.0s · last")
+                ui.label(f"Every {poll_seconds}s · last")
                 last_stamp = ui.label("--:--:--")
             # id, not a class: TAB_TITLE_JS and TOAST_JS both getElementById this
             # and hang a MutationObserver on it. Keep the id if you move it.
@@ -949,7 +1343,7 @@ def main(port):
             if (key := target()):
                 on_window_action(key, what)
         elif what == "drawer":
-            put("drawer_open", not store("drawer_open", True))
+            put("drawer_open", not store("drawer_open", cfg["ui"]["drawer_open"]))
             tick()
         elif what == "sort":
             cycle_sort()
@@ -1046,7 +1440,7 @@ def main(port):
                       for g in groups))
 
     def render_drawer(container, groups):
-        collapsed = not store("drawer_open", True)
+        collapsed = not store("drawer_open", cfg["ui"]["drawer_open"])
         sig = drawer_sig(groups, collapsed)
         if getattr(container, "tt_sig", None) == sig:
             return
@@ -1166,7 +1560,8 @@ def main(port):
         win["latest"] = summary["latest"]
         win["when"].props.set_optional(
             "title", stamp(summary["latest"]) if summary["latest"] else None)
-        render_window_body(win["body"], state, newest, query, changed)
+        render_window_body(win["body"], state, newest, query, changed,
+                           cfg["ui"]["collapsed_sections"])
 
     def repack(visible, cols, weights):
         """Move existing windows into freshly sized columns. move() preserves
@@ -1194,10 +1589,11 @@ def main(port):
                 dress(key, windows[key])
 
     def poll():
-        nonlocal layout, on_wall
+        nonlocal layout, on_wall, touched
         # read the clock BEFORE the files: a write that lands between the two
         # would otherwise be stamped as already seen and never get its gutter
         now = time.time()
+        was_on_wall = on_wall          # the wall the interaction actually landed on
         states = {p.stem: fold_cached(p) for p in sorted(DATA_DIR.glob("*.jsonl"), reverse=True)}
         groups = M.group_sessions(list(states.items()))
         where = {s["key"]: (g["project"], s["index"]) for g in groups for s in g["sessions"]}
@@ -1228,8 +1624,9 @@ def main(port):
         if zoomed in windows:
             visible = [zoomed]
         on_wall = visible
-        drawer_open = store("drawer_open", True)
-        cols = 1 if zoomed in windows else store("cols", 0) or default_cols(WALL_WIDTH)
+        drawer_open = store("drawer_open", cfg["ui"]["drawer_open"])
+        cols = (1 if zoomed in windows
+                else cols_for(wall_width, store("cols", cfg["ui"]["columns"])))
         key = layout_key(visible, cols, marks, folds, zoomed, scope, sort, drawer_open)
         if key != layout:
             layout = key
@@ -1276,17 +1673,23 @@ def main(port):
                             (win["ix"], f":{where[k][1]}")):
                 if el.text != txt:
                     el.set_text(txt)
-        # Only now, only if you are actually looking, and only for the windows we
-        # just drew, does anything count as seen. Hidden, this never runs and the
-        # gutters pile up; off the wall, that window's watermark stays put.
+        # Only now, only if you touched the page since the last poll, and only
+        # for the windows we just drew, does anything count as seen. Untouched,
+        # this never runs and the gutters pile up until you do. A window that was
+        # NOT on the previous wall is skipped: the interaction that brought it
+        # back (Escape out of a zoom) happened while it was still off screen, so
+        # it keeps its gutter until the next one - which is the whole point of a
+        # watermark per window rather than one for the page.
         # int(now) - 1, not now: bin/table-talk stamps ts in WHOLE seconds, so an
         # event written at 100.9 carries ts=100 and a float watermark of 100.3
         # would mark it already-seen. One second back is the newest watermark
         # that cannot swallow a change - it costs a redundant gutter for one poll
         # and never a missed one.
-        if watching:
+        if touched:
+            touched = False
             for k in visible:
-                seen_at[k] = int(now) - 1
+                if k in was_on_wall:
+                    seen_at[k] = int(now) - 1
 
         # The tally counts EVERY session, not just what is on the wall: scope and
         # zoom are choices about the view, and the tab title and the toast hang
@@ -1339,13 +1742,14 @@ def main(port):
 
     tick()
     # fold_cached re-parses only changed files; steady-state tick is O(files stat)
-    ui.timer(2.0, tick)
+    ui.timer(poll_seconds, tick)
     ui.run(host="127.0.0.1", port=port, show=False, reload=False, title="table-talk", favicon="🗣")
 
 
 if __name__ in {"__main__", "__mp_main__"}:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--port", type=int, default=8731)
+    # no default: unset means "whatever the config says", and main() resolves it
+    ap.add_argument("--port", type=int)
     ap.add_argument("--selftest", action="store_true")
     a = ap.parse_args()
     if a.selftest:

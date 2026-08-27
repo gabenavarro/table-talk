@@ -263,6 +263,51 @@ def marked(text, q):
                    for c, hit in parts(text, q))
 
 
+_PATHISH = re.compile(r"[^\s'\"<>()\[\]]*/[^\s'\"<>()\[\]]*")
+
+
+def path_spans(text, roots):
+    """Non-overlapping (start, end, resolved) for path-shaped substrings that
+    resolve to an existing FILE inside one of `roots`.
+
+    Existence plus confinement is the whole filter: prose is full of slashes, and
+    a token that does not resolve to a real file under a root we already trust is
+    not rendered as a link at all. Resolution happens BEFORE the containment
+    check so a symlink cannot escape, and traversal (`..`) collapses first.
+
+    Paths containing spaces are not detected. That is an accepted limit - the
+    alternative is guessing where a filename ends inside a sentence. A trailing
+    ':LINE' as in 'path/to/file.py:42' is swallowed into the token and so fails
+    to resolve too - also accepted, since stripping it would break absolute
+    Windows-style paths.
+    """
+    if not text:
+        return []
+    resolved_roots = []
+    for r in roots or ():
+        try:
+            resolved_roots.append(Path(r).resolve(strict=True))
+        except (OSError, RuntimeError):
+            pass
+    if not resolved_roots:
+        return []
+    out = []
+    for m in _PATHISH.finditer(str(text)):
+        raw = m.group(0).rstrip(".,;:!?")
+        if not raw:
+            continue
+        try:
+            p = Path(raw).resolve(strict=True)
+        except (OSError, RuntimeError, ValueError):
+            continue
+        if not p.is_file():
+            continue
+        if not any(p == root or root in p.parents for root in resolved_roots):
+            continue
+        out.append((m.start(), m.start() + len(raw), str(p)))
+    return out
+
+
 def selftest():
     import tempfile
     with tempfile.TemporaryDirectory() as td:
@@ -437,6 +482,46 @@ def selftest():
             assert _strip.sub("", marked(_t, _q)) == _html.escape(_t), \
                 f"round-trip must equal html.escape for {_t!r} / {_q!r}"
             assert "".join(c for c, _ in parts(_t, _q)) == _t, "chunks must reassemble losslessly"
+
+    import tempfile as _tf
+    with _tf.TemporaryDirectory() as _td:
+        root = Path(_td) / "proj"
+        (root / "docs").mkdir(parents=True)
+        real = root / "docs" / "notes.md"
+        real.write_text("x")
+        (root / "CLAUDE.md").write_text("x")
+        outside = Path(_td) / "secret.txt"
+        outside.write_text("x")
+        roots = [root]
+
+        def spans(t):
+            return [s[2] for s in path_spans(t, roots)]
+
+        assert spans(f"see {real} for detail") == [str(real)], "an existing file is found"
+        assert spans("see docs/notes.md") == [], "a relative path with no root anchor is skipped"
+        assert spans(f"{root}/docs/missing.md") == [], "a path that does not exist is not a link"
+        assert spans(f"{outside}") == [], "a real file OUTSIDE the roots is never linked"
+        assert spans(f"{root}/../{outside.name}") == [], "traversal out of the root is refused"
+        assert spans("/etc/passwd") == [], "an absolute path outside the roots is refused"
+        assert spans(f"a {real} b {root/'CLAUDE.md'} c") == [str(real), str(root / "CLAUDE.md")], \
+            "several paths in one string, in order"
+        assert spans(f"({real})") == [str(real)], "surrounding punctuation is trimmed"
+        assert spans(f"{real}.") == [str(real)], "a trailing sentence period is not part of the path"
+        assert spans("no paths here at all") == []
+        assert spans("") == [] and spans(None) == []
+        assert spans(str(root / "docs")) == [], "a directory must not be returned as linkable"
+
+        link = root / "link.md"
+        link.symlink_to(outside)
+        assert spans(str(link)) == [], "a symlink pointing outside the roots is refused"
+
+        weird = root / "has space.md"
+        weird.write_text("x")
+        assert spans(f"{weird}") == [], "a path containing a space is not detected (accepted limit)"
+
+        sp = path_spans(f"see {real} ok", roots)
+        assert len(sp) == 1 and f"see {real} ok"[sp[0][0]:sp[0][1]] == str(real), \
+            "the span must index the ORIGINAL string exactly"
     print("ok")
 
 

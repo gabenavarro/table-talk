@@ -1,0 +1,62 @@
+# table-talk dashboard configuration. Every value below is the built-in
+# default (see bin/tt_config.py DEFAULTS) — copy this file to
+# ~/.config/table-talk/config.toml, or point TABLE_TALK_CONFIG at a copy,
+# and change only what you want to override. A missing or malformed file
+# just falls back to these defaults; it never stops the dashboard starting.
+
+[server]
+port = 8731             # dashboard HTTP port
+poll_seconds = 2.0       # how often the dashboard re-reads the log files
+
+[ui]
+columns = 0                                # wall column count; 0 = auto-fit to window width
+drawer_open = true                         # whether the session drawer starts open
+filter_debounce_ms = 100                   # delay before the filter box re-renders as you type
+collapsed_sections = ["glossary", "done"]  # window sections that start folded
+
+[links]
+open_command = "xdg-open"  # command used to open a clicked path, e.g. "code" or "$EDITOR"
+extra_roots = []            # extra directories a clicked path may resolve under
+
+[theme]
+default = "system"  # "system", "dark", or "light"
+
+# Colour tokens below are hex strings (#rgb, #rgba, #rrggbb, #rrggbbaa) fed
+# straight into the stylesheet; override any subset, the rest keep their default.
+[theme.dark]
+bg = "#1d2021"
+surface = "#282828"
+surface-2 = "#32302f"
+ink = "#ebdbb2"
+ink-2 = "#a89984"
+ink-3 = "#928374"
+sel = "#665c54"
+caret = "#8ec07c"
+act = "#fb4934"
+act-2 = "#cc241d"
+job = "#83a598"
+job-2 = "#458588"
+gls = "#fabd2f"
+gls-2 = "#d79921"
+ok = "#b8bb26"
+ok-2 = "#98971a"
+mag = "#d3869b"
+
+[theme.light]
+bg = "#e8e6dc"
+surface = "#faf9f5"
+surface-2 = "#f2f0e8"
+ink = "#141413"
+ink-2 = "#6f6e68"
+ink-3 = "#727169"
+sel = "#e8e6dc"
+caret = "#c4512c"
+act = "#a53a2e"
+act-2 = "#d97757"
+job = "#3668a0"
+job-2 = "#6a9bcc"
+gls = "#8a6a10"
+gls-2 = "#b88a28"
+ok = "#4a7038"
+ok-2 = "#788c5d"
+mag = "#7a4a82"
