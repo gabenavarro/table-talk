@@ -72,6 +72,7 @@ words: ask ≤ 25, detail after the dash ≤ 50 (and ≤ 2 sentences), `--why` �
 | Background work advances | `table-talk progress <id> "<update>"` |
 | Item answered/finished | `table-talk done <id>` |
 | Jargon first used | `table-talk term "<term>" --intuitive "<plain one-liner>" --technical "<precise definition>"` |
+| Sketch that explains one item | add `--diagram "<ascii>"` to the `action`/`task`/`progress` command |
 | Concept a picture explains faster | `table-talk diagram "<mermaid source>" --title "<short name>"` → prints ID |
 
 Project defaults to basename of cwd; override with `--project`. `--help` has the rest.

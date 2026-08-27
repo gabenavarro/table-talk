@@ -216,7 +216,7 @@ def pack(keys, ncols, weights, marked=()):
     return cols
 
 
-_ART_ASCII = set("-|+/\\<>^v_=~*.:'`,;()[]{}#")
+_ART_ASCII = set("-|+/\\<>^_=~*.:'`,;()[]{}#")
 
 
 def _is_structure(ch):
@@ -533,6 +533,8 @@ def selftest():
     # art_spans: strokes recede, labels read - and the chunks must reassemble.
     assert art_spans("A->B") == [("A", False), ("->", True), ("B", False)]
     assert art_spans("┌─┐") == [("┌─┐", True)], "box drawing is structure"
+    assert art_spans("eval") == [("eval", False)], \
+        "the letter v is not an arrowhead: a label must never split mid-word"
     assert [c for c, s in art_spans("│ logs │") if not s] == ["logs "], \
         "words inside a box are content; strokes and their padding recede"
     assert art_spans("") == [] and art_spans(None) == []
