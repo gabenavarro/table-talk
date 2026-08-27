@@ -101,15 +101,20 @@ def tally_text(open_actions, open_tasks):
     return "  ".join(parts) if parts else "all clear"
 
 
-# Blur a button the moment it is clicked. ui.keyboard ignores every keystroke
-# while document.activeElement is an input/select/button/textarea (verified in
-# keyboard.js), and every control here - drawer rows, window M/Z/▾, statusline
-# chips - is a <button>. Without this, one click on any of them silently kills
-# the whole keyboard layer until you click elsewhere.
+# Blur a button the moment it is clicked WITH A MOUSE. ui.keyboard ignores every
+# keystroke while document.activeElement is an input/select/button/textarea
+# (verified in keyboard.js), and every control here - drawer rows, window M/Z/▾,
+# statusline chips - is a <button>. Without this, one click on any of them
+# silently kills the whole keyboard layer until you click elsewhere.
+#
+# e.detail is the click count: 1+ for a real pointer, 0 when Enter or Space on a
+# focused button synthesises the click. Blurring on the synthetic one would throw
+# a keyboard user's focus ring to <body> after every activation, which is the
+# same bug pointed the other way.
 BLUR_JS = """<script>
 document.addEventListener('click', e => {
   const b = e.target.closest && e.target.closest('button');
-  if (b) b.blur();
+  if (b && e.detail) b.blur();
 });
 </script>"""
 
@@ -482,9 +487,14 @@ def selftest():
     assert src == {"a"}, "toggle must not mutate its argument"
     assert ".sl-h" in css and ".tt-keys" in css, \
         "the statusline key chips and the ? overlay both need styles"
-    assert ".win.cur" in css, "the window m/z/f act on must be visibly the current one"
+    assert ".win.cur" in css and ".fl-c" in css, \
+        "the window m/z/f act on carries the spec's * flag, not CSS alone"
+    assert ".dw-fold" in css, "the drawer triangle is a control and must look like one"
     assert "closest('button')" in BLUR_JS, \
         "keyboard.js ignores keys while a button holds focus; clicks must blur"
+    assert "e.detail" in BLUR_JS, \
+        "Enter/Space on a button synthesise a click with detail 0; blurring that " \
+        "throws a keyboard user's focus ring to <body> after every activation"
     print("ok")
 
 
@@ -665,15 +675,17 @@ def main(port):
         nonlocal current
         if key == current:
             return
-        old, current = current, key
+        old, current = target(), key    # target() first: it still sees the old one
         put("current", key)
         for k in (old, key):
             if k in windows:
                 dress(k, windows[k])
 
     def target():
-        """The window m/z/f act on: the one you last touched if it is still on
-        the wall, else the first window on it. Never something you cannot see."""
+        """The window m/z/f act on, and the one carrying the * flag: the one you
+        last touched if it is still on the wall, else the first window on it.
+        Never something you cannot see, and never nothing while a wall exists -
+        so the indicator is present from the first paint, with no prior click."""
         return current if current in on_wall else (on_wall[0] if on_wall else None)
 
     def build_window(key, project):
@@ -692,6 +704,7 @@ def main(port):
                 actv = ui.label("#").classes("actv")
                 mark = ui.label("M").classes("fl-m")
                 zoom = ui.label("Z").classes("fl-z")
+                star = ui.label("*").classes("fl-c")   # current, per the design spec
                 when = ui.label("").classes("when")
                 with ui.element("div").classes("wctl"):
                     for act, glyph, tip in (("mark", "M", "Mark (m) — hold at the front"),
@@ -706,10 +719,15 @@ def main(port):
                 cells = ui.element("div").classes("cells")
                 tally = ui.label("")
         return {"el": el, "body": body, "ix": ix, "bell": bell, "actv": actv, "mark": mark,
-                "zoom": zoom, "when": when, "cells": cells, "tally": tally,
+                "zoom": zoom, "star": star, "when": when, "cells": cells, "tally": tally,
                 "hot": False, "latest": 0, "sig": None}
 
-    seen_projects = set()
+    # project -> its open-action count when we last looked. Persisted, because
+    # "the first time we see it" has to mean the first time EVER: kept in the
+    # process only, a reload re-runs this closure with an empty dict, every
+    # quiet project reads as new, and the auto-fold silently undoes whatever the
+    # user chose with the triangle.
+    seen_projects = dict(store("seen", {}))
 
     def on_scope(project):
         """Clicking a project scopes the wall to it; clicking it again, or the ✕
@@ -810,22 +828,37 @@ def main(port):
 
     def apply_fold_rules(groups):
         """A project with nothing open folds the first time we see it, so the
-        drawer opens showing only what is live. A poll that raises the open-action
-        count forces the group back open: a fold must never hide something that
-        just started needing you."""
-        changed = False
+        drawer opens showing only what is live. A poll that RAISES the
+        open-action count forces the group back open: a fold must never hide
+        something that just started needing you.
+
+        Rising edge, not level: comparing against the previous count is what the
+        docstring always promised, and it is what makes the triangle a real
+        control. A level test ('any open action forces it open') springs a
+        manually folded group back open two seconds later, every time, so a busy
+        project could never be collapsed at all."""
+        changed, before = False, dict(seen_projects)
         for g in groups:
-            project = g["project"]
-            if project not in seen_projects:
-                seen_projects.add(project)
-                if g["open_actions"] == 0:
+            project, n = g["project"], g["open_actions"]
+            was = seen_projects.get(project)
+            if was is None:
+                if n == 0:
                     groups_folded.add(project)
                     changed = True
-            elif g["open_actions"] > 0 and project in groups_folded:
+            elif n > was and project in groups_folded:      # an action just LANDED
                 groups_folded.discard(project)
                 changed = True
+            seen_projects[project] = n
         if changed:
             put("groups_folded", sorted(groups_folded))
+        if seen_projects != before:
+            put("seen", seen_projects)
+
+    def on_group_fold(project):
+        """The drawer's ▾/▸ triangle. Folds the group and persists it; the rest
+        of the row still scopes the wall."""
+        _replace(groups_folded, toggle(groups_folded, project), "groups_folded")
+        tick()
 
     def drawer_sig(groups, collapsed):
         """Everything the tree draws, in one comparable value. The poll runs every
@@ -885,8 +918,17 @@ def main(port):
                     "dw-row dw-proj dw-on" if g["project"] == scope else "dw-row dw-proj")
                 row.props(f'data-project="{g["project"]}"')
                 with row:
-                    ui.label(GUIDES["none"] if single else
-                             (GUIDES["closed"] if folded else GUIDES["open"])).classes("dw-g")
+                    # The triangle is a control, not decoration: it folds the
+                    # group, and click.stop keeps that click off the row, which
+                    # scopes. Without the stop, the only affordance promising a
+                    # way back into a folded group scopes the wall instead and
+                    # the tree stays truncated with no way to reopen it.
+                    tri = ui.label(GUIDES["none"] if single else
+                                   (GUIDES["closed"] if folded else GUIDES["open"]))
+                    tri.classes("dw-g" if single else "dw-g dw-fold")
+                    if not single:
+                        tri.props(f'title="fold {g["project"]}"')
+                        tri.on("click.stop", lambda _, p=g["project"]: on_group_fold(p), [])
                     with ui.element("div").classes("dw-l1"):
                         ui.label(g["project"]).classes("dw-nm")
                         ui.label(g["sessions"][0]["date"] if single
@@ -922,11 +964,13 @@ def main(port):
             cls += " marked"
         if key in folds:
             cls += " folded"
-        if key == current:
+        cur = key == target()
+        if cur:
             cls += " cur"
         win["el"].classes(replace=cls)
         win["mark"].set_visibility(key in marks)
         win["zoom"].set_visibility(key == zoomed)
+        win["star"].set_visibility(cur)
 
     def paint_window(win, key, state, newest, query="", changed=()):
         """Update everything about one window that depends on its data.
