@@ -1095,9 +1095,14 @@ def selftest():
     assert ".mmd text.actor>tspan" in css and ".mmd .noteText>tspan" in css, \
         "mermaid fills these tspans DIRECTLY (#333); only a direct rule beats " \
         "a direct rule - near-black names on a dark actor box otherwise"
-    assert ".mmd text{" not in css and ".mmd span" not in css and ".mmd p" not in css, \
-        "no blanket text rule: base's fills are cream, and forcing --ink onto " \
-        "an untouched diagram type (pie, gantt) is light ink on cream in dark"
+    # '.mmd p' alone would also match '.mmd path', a legitimate future selector
+    for blanket in (".mmd text{", ".mmd text,", ".mmd span", ".mmd p{", ".mmd p,"):
+        assert blanket not in css, \
+            f"no blanket text rule ({blanket}): base's fills are cream, and " \
+            "forcing --ink onto an untouched diagram type is ink on cream in dark"
+    assert ".mmd .note," in css and ".mmd .labelBox" in css, \
+        "every ground a tspan rule paints on must be themed too - base's note " \
+        "is #fff5ad and its labelBox #fff4dd, which is cream on cream in dark"
     assert "-" not in MERMAID_INIT, \
         "mermaid's directive sanitiser allows ^[\\d \"#%(),.;A-Za-z]+$ per " \
         "themeVariables value - NO hyphen. ui-monospace blanked the whole " \
