@@ -279,6 +279,15 @@ body{background:var(--bg);color:var(--ink);margin:0}
 .win-b .row:has(.id-gls){grid-template-columns:96px 1fr}
 .id-gls{min-width:0;overflow-wrap:break-word}
 
+/* the diagrams section: same wider title column as glossary terms, same reason */
+.p-mag{color:var(--mag)}
+.win-b .row:has(.id-mag){grid-template-columns:96px 1fr}
+.id-mag{color:var(--mag);min-width:0;overflow-wrap:break-word}
+/* mermaid's own useMaxWidth already caps the SVG at 100% of this box; min-width:0
+   is the usual grid-item floor so the box can shrink to the column */
+.mmd{min-width:0}
+.mmd svg{display:block}
+
 /* ---- statusline ---- */
 .sl{display:flex;align-items:center;background:var(--surface-2);border-top:1px solid var(--rule);
   font-size:11.5px;color:var(--ink-2);height:28px;padding:0 3px;flex:0 0 28px}
