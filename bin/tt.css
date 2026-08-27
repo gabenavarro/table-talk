@@ -283,13 +283,44 @@ body{background:var(--bg);color:var(--ink);margin:0}
 .p-mag{color:var(--mag)}
 .win-b .row:has(.id-mag){grid-template-columns:96px 1fr}
 .id-mag{color:var(--mag);min-width:0;overflow-wrap:break-word}
-/* mermaid's neutral theme assumes a LIGHT ground: node fills are #eee, but
-   edges, arrowheads and free-standing text derive from invert(background) -
-   near-black drawn straight onto the page. So the card paints the white
-   ground the theme assumes, on both palettes; mermaid's own useMaxWidth
-   already caps the SVG at 100% of this box. */
-.mmd{background:#fff;border-radius:3px;padding:6px 8px}
-.mmd svg{display:block}
+/* Mermaid, dressed as the app. It inlines its own stylesheet per SVG, so
+   only author !important rules win here - and keying them on the theme
+   tokens is what makes a diagram follow light/dark live, which no baked
+   ground could (in system mode the server cannot know the client's answer).
+   The font is NOT set here: mermaid measures labels with its configured
+   font, so it rides the init directive instead (see MERMAID_INIT).
+   Coverage is the flowchart + sequence primitives, SCOPED to their own
+   classes - never a blanket text/span rule. Base is not grey: its fills are
+   cream and its loose text is #333, so an unthemed type (pie, gantt) reads
+   poorly in dark whatever we do here, and a blanket rule only moves the
+   problem by forcing --ink onto those cream fills. Sequence label FONTS
+   stay mermaid's own: actorFontFamily and friends are per-diagram config,
+   not theme variables. Both are accepted - the skill steers to flowchart
+   TD. useMaxWidth caps the SVG at 100% of this box. */
+.mmd{padding:2px 0}
+.mmd svg{display:block;background:transparent}
+.mmd .node rect,.mmd .node circle,.mmd .node ellipse,.mmd .node polygon,
+.mmd .node path{fill:var(--surface-2)!important;stroke:var(--ink-3)!important}
+.mmd .nodeLabel,.mmd .nodeLabel p,.mmd .label,.mmd .cluster text{
+  color:var(--ink)!important;fill:var(--ink)!important}
+.mmd .edgePath path,.mmd .flowchart-link{stroke:var(--ink-2)!important}
+.mmd .marker{fill:var(--ink-2)!important;stroke:var(--ink-2)!important}
+.mmd .edgeLabel,.mmd .edgeLabel p{background:var(--surface)!important;
+  color:var(--ink-2)!important}
+.mmd .cluster rect{fill:var(--surface)!important;stroke:var(--rule)!important}
+/* .actor sits on BOTH the box rect and the name text - rect-scoped, or the
+   name paints surface-on-surface. The tspan rules are DIRECT on purpose:
+   mermaid styles these tspans directly (fill:#333), and a direct rule beats
+   one that only inherits, whatever the importance. */
+/* every GROUND the tspan rules below paint on, or the text lands cream on
+   cream in dark: base's note is #fff5ad and its labelBox #fff4dd */
+.mmd rect.actor,.mmd .note,.mmd .labelBox{
+  fill:var(--surface-2)!important;stroke:var(--ink-3)!important}
+.mmd .actor-line{stroke:var(--ink-3)!important}
+.mmd .messageLine0,.mmd .messageLine1{stroke:var(--ink-2)!important}
+.mmd .messageText,.mmd .messageText>tspan,.mmd text.actor>tspan,
+.mmd .labelText>tspan,.mmd .loopText>tspan,.mmd .noteText>tspan,
+.mmd .sectionTitle>tspan{fill:var(--ink)!important;stroke:none!important}
 
 /* the item's ASCII sketch: one guided sub-row like why/rec, centered in the
    card per the spec. white-space:pre keeps the art's own geometry - the row's

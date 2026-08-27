@@ -246,14 +246,23 @@ THEME_ICONS = {"system": "◐", "light": "☀", "dark": "☾"}
 # fixed-width column rather than being faked with borders.
 GUIDES = {"open": "▾", "closed": "▸", "mid": "├", "last": "└", "line": "│", "none": " "}
 
-# One fixed mermaid theme: in "system" mode the server cannot know the
-# client's prefers-color-scheme, so a per-theme render would be a guess.
-# neutral is the greyscale theme, rendered on the white card .mmd paints
-# (its edges assume a light ground - see tt.css). A per-render directive
-# rather than initialize() config: it travels with each render, per diagram.
-# securityLevel cannot be relaxed the same way - mermaid's directive
-# sanitiser blocks it - so strict stays strict.
-MERMAID_INIT = '%%{init: {"theme": "neutral"}}%%\n'
+# Mermaid dressed as the app. The SPLIT is the point: colour comes from
+# tt.css token overrides (they swap with the palette live - in "system" mode
+# the server cannot know the client's prefers-color-scheme, so no baked
+# colour can be right), but the FONT goes through the directive, because
+# mermaid measures labels with its configured font and a CSS-only font swap
+# overflows every box it drew. base is the theme built to be overridden.
+# A per-render directive rather than initialize() config: it travels with
+# each render, per diagram. securityLevel cannot be relaxed the same way -
+# mermaid's directive sanitiser blocks it - so strict stays strict.
+# The same sanitiser runs every themeVariables VALUE through
+# ^[\d "#%(),.;A-Za-z]+$ - NO hyphen - and one bad character blanks the
+# WHOLE value: with ui-monospace in this stack, fontFamily came out "",
+# labels were measured in the page font and every box mis-sized. Verified
+# against the bundled mermaid 11.16.1; the selftest pins hyphen-freedom.
+MERMAID_INIT = ('%%{init: {"theme": "base", "themeVariables": {"fontFamily": '
+                '"JetBrains Mono, Adwaita Mono, SF Mono, Menlo, Consolas, monospace", '
+                '"fontSize": "12px"}}}%%\n')
 
 MAX_CELLS = 20     # a long session must not wreck the footer line
 BAR_CELLS = 14
@@ -1069,10 +1078,35 @@ def selftest():
     assert '"securityLevel": "strict"' in code, \
         "mermaid source comes out of a LOG FILE; strict is what keeps its " \
         "labels sanitized - loose would execute whatever the log carries"
-    assert '%%{init:' in code and '"theme": "neutral"' in code, \
-        "one fixed mermaid theme, readable on both grounds: in system mode the " \
-        "server cannot know the client's prefers-color-scheme, so a per-theme " \
-        "render would be a guess"
+    assert '%%{init:' in code and '"theme": "base"' in code and '"fontFamily"' in code, \
+        "mermaid dresses as the app: base is the theme built to be overridden, " \
+        "and the FONT must go through the directive because mermaid measures " \
+        "labels with its configured font - a CSS-only font swap overflows boxes"
+    assert '"theme": "neutral"' not in code and "background:#fff" not in css, \
+        "the white neutral card is gone: the sheet's token overrides now theme " \
+        "the diagram, and they swap with the palette where a baked ground cannot"
+    assert ".mmd .node rect" in css and "var(--surface-2)!important" in css, \
+        "mermaid inlines its own stylesheet per SVG; only author !important " \
+        "rules keyed on the THEME TOKENS re-dress it and follow light/dark live"
+    assert ".mmd .edgeLabel" in css and ".mmd .marker" in css and ".mmd rect.actor" in css, \
+        "edges, edge labels, arrowheads and sequence actors are the pieces that " \
+        "stayed default-grey when only the nodes were themed - and .actor must " \
+        "be RECT-scoped: the class also sits on the name text"
+    assert ".mmd text.actor>tspan" in css and ".mmd .noteText>tspan" in css, \
+        "mermaid fills these tspans DIRECTLY (#333); only a direct rule beats " \
+        "a direct rule - near-black names on a dark actor box otherwise"
+    # '.mmd p' alone would also match '.mmd path', a legitimate future selector
+    for blanket in (".mmd text{", ".mmd text,", ".mmd span", ".mmd p{", ".mmd p,"):
+        assert blanket not in css, \
+            f"no blanket text rule ({blanket}): base's fills are cream, and " \
+            "forcing --ink onto an untouched diagram type is ink on cream in dark"
+    assert ".mmd .note," in css and ".mmd .labelBox" in css, \
+        "every ground a tspan rule paints on must be themed too - base's note " \
+        "is #fff5ad and its labelBox #fff4dd, which is cream on cream in dark"
+    assert "-" not in MERMAID_INIT, \
+        "mermaid's directive sanitiser allows ^[\\d \"#%(),.;A-Za-z]+$ per " \
+        "themeVariables value - NO hyphen. ui-monospace blanked the whole " \
+        "fontFamily: measured in the page font, drawn in mono, every box wrong"
     assert '"dia": "diagrams" not in collapsed' in code, \
         "diagrams exist to be LOOKED at - the reply points the user here - so " \
         "unlike glossary/done they start open unless the config folds them"
