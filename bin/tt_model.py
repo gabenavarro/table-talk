@@ -157,6 +157,21 @@ def group_sessions(sessions):
     return groups
 
 
+def merge_projects(sessions):
+    """[(stem, state)] -> {project: one merged state}, every event tagged with
+    the session that recorded it. Ids are minted unique across every file, so
+    the merge cannot collide. The tag is the event's own session code, or its
+    file's date for anything recorded before stamping existed."""
+    out = {}
+    for stem, state in sessions:
+        date, project = parse_stem(stem)
+        fallback = date[5:].replace("-", "") or project[:4]
+        bucket = out.setdefault(project, {})
+        for i, ev in state.items():
+            bucket[i] = {**ev, "_from": str(ev.get("sid") or fallback)}
+    return out
+
+
 def sort_groups(groups, mode):
     """Order the drawer. Every key falls back to recency so the order is total
     and stable; children always read newest-first regardless of group order."""
@@ -450,6 +465,16 @@ def selftest():
         "children always read newest-first whatever the group order"
     assert sort_groups(groups, "nonsense") == by_recent, "an unknown sort falls back to recent"
     assert SORTS == ("recent", "actions", "project")
+
+    m = merge_projects([("2026-08-26-phe", {"a": {"id": "a", "sid": "beef", "ts": 1}}),
+                        ("2026-08-25-phe", {"b": {"id": "b", "ts": 2}}),
+                        ("2026-08-25-gpn", {"c": {"id": "c", "ts": 3}})])
+    assert set(m) == {"phe", "gpn"}, "one card per project, not per file"
+    assert set(m["phe"]) == {"a", "b"}, "every session's rows land in one state"
+    assert m["phe"]["a"]["_from"] == "beef", "a stamped event is tagged with its session"
+    assert m["phe"]["b"]["_from"] == "0825", \
+        "an event recorded before stamping falls back to its file's date"
+    assert merge_projects([]) == {}
 
     # weight: derived from content, never from measured pixels. A done item costs
     # nothing because it lives in a collapsed section.

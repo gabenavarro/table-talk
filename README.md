@@ -67,7 +67,11 @@ two seconds.
   text is read for a percentage and drawn as a bar; an attached `--diagram`
   sketch draws centered under its item in the theme's inks;
   a coloured gutter marks whatever moved since you last looked. Click any id to
-  copy `table-talk done <id>`.
+  copy `table-talk done <id>`. Press `u` to merge: one window per project
+  holding every session's actions, jobs, glossary and done, each row tagged
+  with the session code that recorded it (or its date for events recorded
+  before session stamping existed) — the drawer still lists every real
+  session underneath.
 - **The drawer** is a session tree grouped by project, every row carrying open
   counts and an htop-style meter (a project's numbers are the sum of its
   sessions', never the average of their percentages). Click a project to scope
@@ -86,6 +90,7 @@ two seconds.
 | `s` | cycle the drawer sort: recent → actions → project |
 | `/` | jump to the filter box |
 | `!` | needs-me: drop windows with nothing open |
+| `u` | merge: one window per project, every row tagged with its session |
 | `?` | the key list |
 | `Esc` | leave zoom |
 

@@ -220,8 +220,8 @@ ttWall();
 # and dispatch through the same handler, so a key can never do something no
 # click can.
 KEYMAP = {"\\": "drawer", "m": "mark", "z": "zoom", "f": "fold",
-          "s": "sort", "/": "filter", "!": "needs-me", "?": "keys",
-          "Escape": "unzoom"}
+          "s": "sort", "/": "filter", "!": "needs-me", "u": "merge",
+          "?": "keys", "Escape": "unzoom"}
 
 
 def next_sort(mode):
@@ -350,6 +350,8 @@ def _id_button(ev, cls):
     btn.props["data-id"] = str(ev["id"])
     with btn:
         ui.label(str(ev["id"]))
+        if ev.get("_from"):
+            ui.label(str(ev["_from"])).classes("sid")
 
 
 def _marked(text, query, cls=None):
@@ -956,8 +958,10 @@ def selftest():
     assert "width:100%" in css.split(".tt-app{")[1].split("}")[0], \
         "the shell must be pinned to the viewport, or nowrap statusline segments widen the page"
     assert KEYMAP == {"\\": "drawer", "m": "mark", "z": "zoom", "f": "fold",
-                      "s": "sort", "/": "filter", "!": "needs-me", "?": "keys",
-                      "Escape": "unzoom"}
+                      "s": "sort", "/": "filter", "!": "needs-me", "u": "merge",
+                      "?": "keys", "Escape": "unzoom"}
+    assert KEYMAP["u"] == "merge", "the merge view needs a key like every other view"
+    assert '.sid' in css, "a merged row must say which session recorded it"
     assert next_sort("recent") == "actions"
     assert next_sort("actions") == "project"
     assert next_sort("project") == "recent"
@@ -1104,6 +1108,8 @@ def selftest():
     import ast
     src = Path(__file__).read_text()
     code = src.split("def selftest():")[0] + src.split("\ndef ago(", 1)[1]
+    assert "M.merge_projects" in code, \
+        "the merged wall is the model's merge, not a second grouping in the UI"
     dyn = [n.lineno for n in ast.walk(ast.parse(src))
            if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
            and n.func.attr == "props"
@@ -1138,9 +1144,13 @@ def selftest():
         "on_focus must go through scroll_js, which hands the key to JS as a " \
         "json.dumps LITERAL. Spliced into a selector, --project \"y'+alert(9)+'z\" " \
         "ran on an ordinary drawer click - and don't-panic broke the scroll"
-    assert code.index("paint_window(win, k, states[k]") < code.index('win["sig"] = sig'), \
+    assert code.index("paint_window(win, k, wall_states[k]") < code.index('win["sig"] = sig'), \
         "the paint signature is recorded AFTER the paint: assigned first, one " \
         "exception mid-build marks a half-drawn window current forever"
+    assert code.index("def on_focus") < code.index("M.parse_stem(key)[1]"), \
+        "a drawer click must resolve to the window actually on the wall: " \
+        "merged, the session stem is never on it, so the click discarded " \
+        "scope and needs-me and then scrolled to nothing"
     assert code.index('srow.on("click"') < code.index("container.tt_sig = sig"), \
         "same for the drawer: its signature is recorded after the tree is built"
     assert code.index("<style>{load_css()}</style>") < code.index('theme_css(cfg["theme"])'), \
@@ -1589,6 +1599,11 @@ def main(port=None):
         hiding this one is cleared first - a click that visibly does nothing is
         worse than a click that changes the view."""
         nonlocal zoomed, scope, needs_me
+        # While merged the wall holds PROJECTS, so a session stem is on it under
+        # its project's name: resolve it, or this clears scope and needs-me and
+        # then scrolls to a window that does not exist.
+        if store("merged", False):
+            key = M.parse_stem(key)[1]
         on_pick(key)
         if key not in on_wall:
             zoomed, scope, needs_me = None, None, False
@@ -1628,6 +1643,9 @@ def main(port=None):
             # hide an open action however hard you squint at it
             needs_me = not needs_me
             put("needs_me", needs_me)
+            tick()
+        elif what == "merge":
+            put("merged", not store("merged", False))
             tick()
         elif what == "unzoom":
             if zoomed:
@@ -1872,17 +1890,27 @@ def main(port=None):
         was_on_wall = on_wall          # the wall the interaction actually landed on
         states = {p.stem: fold_cached(p) for p in sorted(DATA_DIR.glob("*.jsonl"), reverse=True)}
         groups = M.group_sessions(list(states.items()))
-        where = {s["key"]: (g["project"], s["index"]) for g in groups for s in g["sessions"]}
-        opens = {s["key"]: s["summary"]["open_actions"] for g in groups for s in g["sessions"]}
         sort = store("sort", "recent")
         # the wall has no sort of its own: it reads in the drawer's order
         ordered = M.sort_groups(groups, sort)
-        order = [s["key"] for g in ordered for s in g["sessions"]]
         apply_fold_rules(ordered)     # before the render, or a forced-open group draws folded
         render_drawer(drawer, ordered)
 
-        for key in list(windows):              # a session file went away
-            if key not in states:
+        merged = bool(store("merged", False))
+        # The DRAWER always lists real session files; only the wall merges.
+        if merged:
+            wall_states = M.merge_projects(list(states.items()))
+            order = [g["project"] for g in ordered]
+            where = {g["project"]: (g["project"], len(g["sessions"])) for g in ordered}
+        else:
+            wall_states = states
+            order = [s["key"] for g in ordered for s in g["sessions"]]
+            where = {s["key"]: (g["project"], s["index"]) for g in ordered for s in g["sessions"]}
+        opens = ({g["project"]: g["open_actions"] for g in ordered} if merged else
+                 {s["key"]: s["summary"]["open_actions"] for g in ordered for s in g["sessions"]})
+
+        for key in list(windows):              # a session file (or project, merged) went away
+            if key not in wall_states:
                 windows.pop(key)["el"].delete()
         for key in order:
             if key not in windows:
@@ -1910,14 +1938,14 @@ def main(port=None):
             # a folded window is a titlebar: costing it its full content weight
             # would leave the packer balancing around height that is not drawn
             repack(visible, cols,
-                   {k: 1 if k in folds else M.weight(v) for k, v in states.items()})
+                   {k: 1 if k in folds else M.weight(v) for k, v in wall_states.items()})
 
         query = (search.value or "").strip()
         # exactly one cursor on the page: the newest open action anywhere on the wall
         newest, newest_ts = None, -1
         rows = matched = 0
         for k in visible:
-            for ev in states[k].values():
+            for ev in wall_states[k].values():
                 typ = ev.get("type")
                 if typ not in ("action", "task", "term", "diagram"):
                     continue
@@ -1934,10 +1962,10 @@ def main(port=None):
             # the gutter set is part of the signature, or the window that must
             # DROP its gutters never repaints: its data did not change, that is
             # the whole point of it
-            changed = changed_ids(states[k], seen_at.get(k, opened_ts))
-            sig = (query, newest, states[k], changed)
+            changed = changed_ids(wall_states[k], seen_at.get(k, opened_ts))
+            sig = (query, newest, wall_states[k], changed)
             if win["sig"] != sig:
-                paint_window(win, k, states[k], newest, query, changed)
+                paint_window(win, k, wall_states[k], newest, query, changed)
                 # AFTER the paint, never before: an exception mid-build (one
                 # non-string field is enough) would otherwise leave the window
                 # permanently marked up to date and truncated where it threw.
@@ -1946,7 +1974,7 @@ def main(port=None):
             # both advance without the window's own data changing: age with the
             # clock, the tmux index whenever a newer sibling session appears
             for el, txt in ((win["when"], ago(win["latest"]) if win["latest"] else ""),
-                            (win["ix"], f":{session_label(states[k], where[k][1])}")):
+                            (win["ix"], f":{session_label(wall_states[k], where[k][1])}")):
                 if el.text != txt:
                     el.set_text(txt)
         # Only now, only if you touched the page since the last poll, and only
@@ -1978,8 +2006,9 @@ def main(port=None):
             scope_label.set_text(f"showing {scope} only")
         for n, b in col_buttons.items():     # the EFFECTIVE count: zoom forces 1
             b.classes(replace="sl-c on" if n == cols else "sl-c")
-        # the only chip with a state worth showing: the others are momentary
+        # the only chips with a state worth showing: the others are momentary
         chips["needs-me"].classes(replace="sl-h on" if needs_me else "sl-h")
+        chips["merge"].classes(replace="sl-h on" if merged else "sl-h")
 
     spin_i = 0
 
