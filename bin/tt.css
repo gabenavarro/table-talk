@@ -34,29 +34,56 @@ body.body--dark{
 
 html,body{height:100%}
 body{background:var(--bg);color:var(--ink);margin:0}
-/* Typography is scoped to the new app shell, not to body: the legacy card DOM
-   below was laid out against Quasar's default metrics and squeezes if the base
-   font shrinks under it. Goes away with the legacy block. */
-.tt-app{display:flex;flex-direction:column;height:100vh;overflow:hidden;
+/* Typography is scoped to the app shell rather than body so the Quasar bits we
+   still use (the filter field) keep their own metrics and are opted in by hand. */
+/* width:100% is load-bearing: .nicegui-content is a flex column with
+   align-items:flex-start, so .tt-app is a flex item that shrink-to-fits to its
+   MAX-CONTENT width. The statusline's segments are white-space:nowrap, so
+   without this the shell (and .tt-main with it) takes their combined width and
+   the page scrolls sideways - measured 909.53px against a 900px viewport. */
+.tt-app{display:flex;flex-direction:column;height:100vh;width:100%;overflow:hidden;
   font-family:var(--mono);font-size:12px;line-height:1.55}
 .tt-main{display:grid;grid-template-columns:284px 1fr;flex:1;min-height:0}
 .tt-main.tt-collapsed{grid-template-columns:54px 1fr}
 .pc,.dw-meta,.when,.sl-clock,.pct{font-variant-numeric:tabular-nums}
 
 /* ---- drawer ---- */
-.dw{border-right:1px solid var(--rule);background:var(--surface);overflow-y:auto;min-height:0}
+.dw{border-right:1px solid var(--rule);background:var(--surface);min-height:0;
+  display:flex;flex-direction:column;overflow:hidden}
+.dw-tree{overflow-y:auto;min-height:0;flex:1}
+/* the filter bar is a sibling of the tree, not a child: render_drawer() clears
+   the tree on every poll and would take the input's focus and caret with it */
+.dw-find{display:flex;align-items:center;gap:6px;padding:1px 8px 1px 4px;
+  border-bottom:1px solid var(--rule)}
+.dw-in{flex:1;min-width:0}
+.dw-find .q-field__native,.dw-find .q-field__native::placeholder{
+  font:inherit;color:var(--ink);opacity:1}
+.dw-find .q-field__native::placeholder{color:var(--ink-3)}
+.dw-find .q-icon{font-size:15px;color:var(--ink-3)}
+.dw-count{color:var(--ink-3);font-size:10px;white-space:nowrap}
+.dw-theme{border:0;background:transparent;font:inherit;color:var(--ink-3);
+  cursor:pointer;padding:0 3px;line-height:1}
+.dw-theme:hover{color:var(--caret)}
 .dw-top{display:flex;align-items:center;gap:7px;padding:7px 10px;
   border-bottom:1px solid var(--rule);font-size:11px;color:var(--ink-3)}
 .dw-top .ttl{font-weight:700;color:var(--ink);letter-spacing:.05em;
   text-transform:uppercase;font-size:10.5px}
-.dw-sort{padding:5px 10px;border-bottom:1px solid var(--rule);color:var(--ink-3);
-  font-size:11px;cursor:pointer}
+/* flex, or every mode stacks onto its own line: ui.label emits a div, and a
+   block child of a block parent is a new line - the same trap .blocks and
+   .cells fell into further down */
+.dw-sort{display:flex;align-items:baseline;gap:7px;padding:5px 10px;
+  border-bottom:1px solid var(--rule);color:var(--ink-3);font-size:11px;cursor:pointer}
 .dw-sort b{color:var(--gls);font-weight:700}
 .dw-row{display:grid;grid-template-columns:15px 1fr;gap:1px 4px;width:100%;text-align:left;
   border:0;background:transparent;font:inherit;color:inherit;cursor:pointer;padding:6px 10px 7px}
 .dw-row:hover{background:var(--sel)}
 .dw-row:focus-visible{outline:2px solid var(--caret);outline-offset:-2px}
 .dw-g{color:var(--ink-3);opacity:.88;font-size:11.5px}
+/* the triangle is its own click target - it folds the group while the rest of
+   the row scopes the wall. Padded out to a real hit area, negatively margined
+   back so the guide column still lines up with the ├ and │ below it. */
+.dw-fold{cursor:pointer;padding:2px 6px;margin:-2px -6px;border-radius:2px}
+.dw-fold:hover{color:var(--caret);opacity:1;background:var(--sel)}
 .dw-l1{display:flex;align-items:baseline;gap:7px;min-width:0}
 .dw-nm{font-weight:700;color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .dw-sess .dw-nm{font-weight:400;color:var(--ink-2);font-size:11.5px}
@@ -92,6 +119,17 @@ body{background:var(--bg);color:var(--ink);margin:0}
 .win-hot{border-color:color-mix(in srgb,var(--act) 55%,transparent)}
 .win.marked{border-color:var(--caret);box-shadow:inset 2px 0 0 var(--caret)}
 .win.folded .win-b{display:none}
+/* the window m/z/f act on - tmux's current window. Without this the keys act on
+   a window nobody can identify.
+   A TINT toward --sel, never --sel itself: in dark, --sel (#665c54) is ~2.9x the
+   luminance --act and --ink-3 were chosen against, and it washed the titlebar's
+   own glyphs out - the ! bell, which is the spec's "is anything waiting on me?"
+   signal, fell to 1.89:1, and target() marks some window .cur on the FIRST
+   paint, so no interaction is needed to hit it. Measured on the mix below:
+   bell 3.2:1, index/age 3.0:1 (dark), bell 5.6:1 (light). The caret underline
+   is the primary cue and stays. */
+.win.cur>.win-t{background:color-mix(in srgb,var(--sel) 25%,var(--surface-2));
+  box-shadow:inset 0 -2px 0 var(--caret)}
 .win-t{display:flex;align-items:center;gap:6px;padding:5px 9px;background:var(--surface-2);
   border-bottom:1px solid var(--rule);font-size:11.5px}
 .win-t .nm{color:var(--ink);font-weight:700}
@@ -101,6 +139,9 @@ body{background:var(--bg);color:var(--ink);margin:0}
 .actv{color:var(--job);font-weight:800}
 .fl-m{color:var(--caret);font-weight:800}
 .fl-z{color:var(--gls);font-weight:800}
+/* the flag set the design spec pins: ! bell, # activity, M marked, Z zoomed,
+   * current. The titlebar tint below is the reinforcement, not the signal. */
+.fl-c{color:var(--caret);font-weight:800}
 .when{margin-left:auto;color:var(--ink-3);font-size:10.5px}
 .wctl{display:flex;gap:2px;margin-left:8px}
 .wb{border:1px solid transparent;background:transparent;color:var(--ink-3);font:inherit;
@@ -111,12 +152,23 @@ body{background:var(--bg);color:var(--ink);margin:0}
   align-items:baseline;cursor:pointer}
 .pr .n{color:var(--ink-3);font-weight:400}
 .p-act{color:var(--act)} .p-job{color:var(--job)} .p-gls{color:var(--gls)} .p-ok{color:var(--ok)}
-.row{display:grid;grid-template-columns:42px 1fr;gap:8px;padding:5px 9px 8px;
+/* every .row selector is scoped to the window body on purpose: 'row' is also a
+   Quasar utility class, and QField's own markup carries it - an unscoped
+   .row{display:grid} rule collapses the filter input to a ~40 px stub */
+.win-b .row{display:grid;grid-template-columns:42px 1fr;gap:8px;padding:5px 9px 8px;
   align-items:start;border-left:3px solid transparent}
-.row:hover{background:var(--sel)}
-.row.changed{border-left-color:var(--act)}
-.row.changed-job{border-left-color:var(--job)}
-.row .ttl{color:var(--ink);line-height:1.5}
+.win-b .row:hover{background:var(--sel)}
+.win-b .row.changed{border-left-color:var(--act)}
+.win-b .row.changed-job{border-left-color:var(--job)}
+/* the filter dims, it never hides — an open action is never removed from the wall */
+.tt-dim{opacity:.35}
+/* colour only - padding or weight changes advance width, re-wraps the
+   paragraph, and destroys the zero-reflow property the dim treatment exists for */
+.tt-hit{background:var(--gls);color:var(--bg);border-radius:2px}
+/* baseline flex, not block flow: the blink cursor is a sibling element, and in
+   block flow it drops onto its own line under the title instead of trailing it */
+.win-b .row .ttl{color:var(--ink);line-height:1.5;display:flex;flex-wrap:wrap;
+  align-items:baseline;gap:.35em;min-width:0}
 /* why/rec are prose, hung off the action on real box-drawing guides */
 .sub{display:grid;grid-template-columns:20px 28px 1fr;gap:6px;margin-top:2px;
   font-family:var(--prose);font-size:12.5px;line-height:1.5;color:var(--ink-2)}
@@ -124,17 +176,24 @@ body{background:var(--bg);color:var(--ink);margin:0}
 .sub .lb{font-family:var(--mono);font-size:9.5px;font-weight:700;letter-spacing:.11em;
   text-transform:uppercase;color:var(--ink-3);line-height:2.1}
 .meter{margin-top:4px;display:flex;gap:8px;align-items:baseline;flex-wrap:wrap}
-.blocks{color:var(--ok);letter-spacing:-.5px}
+/* the two halves of one bar: flex, or they stack as block divs into half-bars */
+.blocks{color:var(--ok);letter-spacing:-.5px;display:flex}
 .blocks .e{color:var(--ink-3);opacity:.45}
 .pct{color:var(--ink-2)}
 .raw{color:var(--ink-3);font-size:11px}
-.scan span{color:var(--job);animation:scan 1.9s linear infinite}
-.scan span:nth-child(2){animation-delay:.16s} .scan span:nth-child(3){animation-delay:.32s}
-.scan span:nth-child(4){animation-delay:.48s} .scan span:nth-child(5){animation-delay:.64s}
+/* '>*', never 'span': every glyph the renderer emits is a div, so a span
+   selector matches nothing and the sweep silently never animates */
+.scan{display:flex;gap:1px}
+.scan>*{color:var(--job);animation:scan 1.9s linear infinite}
+.scan>*:nth-child(2){animation-delay:.16s} .scan>*:nth-child(3){animation-delay:.32s}
+.scan>*:nth-child(4){animation-delay:.48s} .scan>*:nth-child(5){animation-delay:.64s}
 @keyframes scan{0%,45%,100%{opacity:.2}20%{opacity:1}}
 .empty{padding:2px 9px 8px;color:var(--ink-3);font-size:11.5px}
 .win-f{margin-top:auto;padding:6px 9px;border-top:1px solid var(--rule);display:flex;gap:9px;
   align-items:center;font-size:11px;color:var(--ink-2)}
+/* flex, or the done and outstanding halves stack into two rows of cells - the
+   same trap .blocks fell into: every glyph the renderer emits is a div */
+.cells{display:flex}
 .cells .on{color:var(--ok)} .cells .off{color:var(--ink-3);opacity:.5}
 .cursor{color:var(--caret);animation:blink 1.1s steps(2,start) infinite}
 @keyframes blink{to{visibility:hidden}}
@@ -143,64 +202,70 @@ body{background:var(--bg);color:var(--ink);margin:0}
 .id:hover,.id:focus-visible{color:var(--caret);outline:none}
 .id.copied{color:var(--ok)}
 .id-act{color:var(--act)} .id-job{color:var(--job)} .id-gls{color:var(--gls)}
+/* A glossary term is not a 4-hex id. It shares the row grid with action and job
+   ids, whose 42px track fits four chars exactly - so a real term ("window
+   flags", "reverse complement") overflowed its own cell and overprinted the
+   definition beside it, both illegible at the junction.
+   min-width:0 is the load-bearing half: a grid item defaults to min-width:auto,
+   which is its MIN-CONTENT width, and that happily exceeds a fixed track and
+   spills. overflow-wrap then breaks a single long word instead of letting it
+   set an unreachable min-content floor. Scoped by :has so the id columns keep
+   their 42px and a 4-hex id can never wrap. */
+.win-b .row:has(.id-gls){grid-template-columns:96px 1fr}
+.id-gls{min-width:0;overflow-wrap:break-word}
 
 /* ---- statusline ---- */
 .sl{display:flex;align-items:center;background:var(--surface-2);border-top:1px solid var(--rule);
   font-size:11.5px;color:var(--ink-2);height:28px;padding:0 3px;flex:0 0 28px}
-.sl-s{padding:0 10px;display:flex;align-items:center;gap:6px;white-space:nowrap}
-.sl-s[hidden]{display:none}   /* a class-set display would beat the UA [hidden] rule */
+.sl-s{padding:0 10px;display:flex;align-items:center;gap:6px;white-space:nowrap;flex-shrink:0}
+/* Keyed on the CLASS because that is what set_visibility() toggles - it appends
+   'hidden' to the class list, it does not set a [hidden] attribute. Quasar's own
+   .hidden{display:none !important} would win here anyway; this states the intent
+   locally rather than depending on a vendor rule we do not control. */
+.sl-s.hidden{display:none}
 .sl-s+.sl-s{border-left:1px solid var(--rule)}
 .sl-s.on{background:var(--ink);color:var(--surface);font-weight:700;height:100%}
 .sl-s.on .spin{color:var(--ok)}
 .sl-stale{color:var(--act)}
 .sl-scope{color:var(--caret)}
+/* the one segment allowed to give up room: at a narrow width the hints truncate
+   so the tally, the cadence and the clock all survive */
+.sl-k{flex-shrink:1;min-width:0;overflow:hidden;gap:0}
 .sl-k b{color:var(--mag);font-weight:700}
+/* Every hint is a real button: the keyboard is an accelerator, never the only
+   way in. flex, or the glyph and its name stack - ui.label emits a div. */
+.sl-h{border:0;background:transparent;font:inherit;color:inherit;cursor:pointer;
+  display:flex;align-items:center;gap:4px;padding:0 6px}
+.sl-h:hover{color:var(--caret)}
+.sl-h:hover b{color:var(--caret)}
+.sl-h.on{color:var(--gls);font-weight:700}
+.sl-h:focus-visible{outline:2px solid var(--caret);outline-offset:-2px}
 .sl-c{border:0;background:transparent;font:inherit;cursor:pointer;color:var(--ink-3);padding:0 4px}
 .sl-c.on{color:var(--gls);font-weight:700}
-.sl-clock{margin-left:auto;padding:0 10px;color:var(--ink-3)}
+.sl-clock{margin-left:auto;padding:0 10px;color:var(--ink-3);flex-shrink:0}
 .spin{display:inline-block;width:9px;color:var(--ok)}
 
 .tt-none{margin:auto;text-align:center;color:var(--ink-3);padding:48px}
 
-/* ---- LEGACY ----------------------------------------------------------------
-   Styles for the card/table DOM that main() still builds. Retargeted onto the
-   new tokens so the app stays usable at every commit on this branch; Tasks 8-11
-   delete this block as the DOM it styles disappears. */
-.nicegui-content{max-width:1100px;margin:0 auto}
-.tt-header{background:color-mix(in srgb,var(--surface-2) 90%,transparent);color:var(--ink);
-  -webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px);
-  border-bottom:1px solid var(--rule)}
-.tt-title{font-family:var(--mono);letter-spacing:.05em;color:var(--gls)}
-/* nowrap: NiceGUI 3.16 renders ui.row() as CSS grid, so an unconstrained label
-   lands in a narrow auto track and wraps character by character. */
-.tt-session{font-family:var(--mono);color:var(--job);white-space:nowrap;min-width:max-content}
-.tt-sec{font-size:.72rem;font-weight:700;letter-spacing:.09em;text-transform:uppercase;
-  color:var(--ink-3)}
-.nicegui-content .q-card{background:var(--surface);color:var(--ink);
-  border:1px solid var(--rule);border-radius:4px;box-shadow:none}
-.q-table{background:transparent;color:var(--ink)}
-.q-table__card{background:transparent;box-shadow:none;color:var(--ink)}
-.q-table th{color:var(--ink-3);font-weight:600;border-color:var(--rule)}
-.q-table td{border-color:var(--rule)}
-.q-table tbody tr:hover{background:var(--sel)}
-.q-table__bottom{color:var(--ink-3)}
-.q-expansion-item .q-item{color:var(--ink-3)}
-.tt td,.tt th{font-variant-numeric:tabular-nums}
-.tt td{white-space:normal;overflow-wrap:anywhere;vertical-align:top}
-.tt td:first-child,.tt th:first-child{font-family:var(--mono)}
-.tt td:first-child{white-space:nowrap}
-.tt-age{color:var(--ink-3)}
-.tt-clear{color:var(--ok);font-size:.85rem}
-.tt-toast{position:fixed;top:64px;right:16px;z-index:9999;background:var(--surface-2);
-  color:var(--act);border:1px solid var(--act);border-radius:4px;padding:.5rem .9rem;
-  font-weight:600;opacity:0;transform:translateY(-6px);transition:all .3s ease}
+/* Quasar teleports a dialog to the end of <body>, outside .tt-app, so it
+   inherits none of the shell's typography - it has to name its own, the same
+   way .tt-toast does. */
+.tt-keys{background:var(--surface);border:1px solid var(--rule);border-radius:3px;
+  padding:12px 16px;font-family:var(--mono);font-size:12px;color:var(--ink);min-width:190px}
+.tt-keys .ttl{font-weight:700;letter-spacing:.05em;text-transform:uppercase;
+  font-size:10.5px;color:var(--ink-3);padding-bottom:6px;
+  border-bottom:1px solid var(--rule);margin-bottom:6px}
+.tt-keys .k-row{display:flex;align-items:baseline;gap:9px;padding:2px 0}
+.tt-keys b{color:var(--mag);font-weight:700;min-width:3.2em}
+
+/* The toast is the only thing that draws outside .tt-app, so it cannot inherit
+   the shell's face - it names its own. Fires only when the open-action tally
+   RISES; see TOAST_JS. */
+.tt-toast{position:fixed;top:14px;right:16px;z-index:9999;background:var(--surface-2);
+  color:var(--act);border:1px solid var(--rule);border-radius:3px;padding:6px 12px;
+  font-family:var(--mono);font-size:11.5px;font-weight:700;
+  opacity:0;transform:translateY(-6px);transition:opacity .3s ease,transform .3s ease}
 .tt-toast-in{opacity:1;transform:none}
-.tt-search .q-field__native{color:var(--ink)}
-.tt-search .q-field__native::placeholder{color:var(--ink-3);opacity:.7}
-.tt-rollup{color:var(--ink-3)}
-.tt-rollup-hot{color:var(--act);font-weight:600}
-.tt-pulse{color:var(--ok);transition:opacity .9s ease}
-/* ---- end legacy ---------------------------------------------------------- */
 
 @media (prefers-reduced-motion: reduce){
   *,*::before,*::after{animation-duration:.001ms !important;

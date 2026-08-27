@@ -11,9 +11,10 @@ technical terms explained twice (intuitive + precise). Everything is also an
 event in a local log, and a live dashboard shows every session's tables with
 the full cumulative glossary.
 
-![table-talk dashboard in Catppuccin Latte and Mocha](docs/assets/hero.png)
+![The table-talk dashboard: a drawer of sessions grouped by project beside a tiled wall of session windows](docs/assets/hero.png)
 
-<p align="center"><img src="docs/assets/demo.gif" width="720" alt="Tables filling in live as a Claude session records actions, progress, and terms"></p>
+<!-- The terminal demo is scripted in docs/assets/demo.tape; `vhs docs/assets/demo.tape`
+     re-renders docs/assets/demo.gif, which still shows the pre-wall dashboard. -->
 
 ## How it works
 
@@ -21,8 +22,9 @@ the full cumulative glossary.
   `~/.local/share/table-talk/<date>-<project>.jsonl`. Current state is a
   shallow-merge fold by 4-hex id — append-only, safe for concurrent sessions.
 - **Dashboard** (`bin/table-talk-dash.py`, [NiceGUI](https://nicegui.io) via
-  `uv run`, PEP 723): `table-talk serve` → http://127.0.0.1:8731 — one card
-  per session, sortable tables, refreshes every 2 s, done items collapsed.
+  `uv run`, PEP 723): `table-talk serve` → http://127.0.0.1:8731 — a tiled wall
+  of sessions beside a project drawer, refreshed every 2 s. See
+  [Dashboard](#dashboard).
 - **Skill** (`skill/SKILL.md`): tells Claude to record as it works and to end
   every reply with the tables, using ids you can reference back ("a3f9: option 2").
 
@@ -46,6 +48,43 @@ install.sh symlinks the CLI into ~/.local/bin — make sure that's on your PATH.
     table-talk term "FVA" --intuitive "range of possible flux" --technical "LP min/max per reaction at fixed optimum"
     table-talk show            # plain-text dump
     table-talk serve           # dashboard
+
+## Dashboard
+
+`table-talk serve` opens a tmux-shaped view of every session log, polling every
+two seconds.
+
+- **The wall** tiles one window per session, packed into columns by how much
+  each has to say. A titlebar reads `project:index` and carries tmux's flags —
+  `!` open actions, `#` jobs running, `M` marked, `Z` zoomed, `*` current — over
+  sections for actions, jobs, glossary and done, and a footer tallying what is
+  resolved. Progress text is read for a percentage and drawn as a bar; a
+  coloured gutter marks whatever moved since you last looked. Click any id to
+  copy `table-talk done <id>`.
+- **The drawer** is a session tree grouped by project, every row carrying open
+  counts and an htop-style meter (a project's numbers are the sum of its
+  sessions', never the average of their percentages). Click a project to scope
+  the wall to it, a session to jump to its window. The filter box dims
+  non-matching rows instead of hiding them — a filter must never make an open
+  action disappear — and reports `N/M rows match`.
+- **The statusline** carries the poll cadence, the open tally, the column
+  count, and one chip per key.
+
+| key | does |
+| --- | --- |
+| `\` | show or hide the drawer |
+| `m` | mark the current window — marked windows pack first |
+| `z` | zoom it to fill the wall |
+| `f` | fold it down to its titlebar |
+| `s` | cycle the drawer sort: recent → actions → project |
+| `/` | jump to the filter box |
+| `!` | needs-me: drop windows with nothing open |
+| `?` | the key list |
+| `Esc` | leave zoom |
+
+Every key has a click equivalent — the statusline chips, the `M` `Z` `▾`
+buttons on each titlebar, and the filter box itself — so nothing on this page
+is keyboard-only.
 
 ## Test
 
