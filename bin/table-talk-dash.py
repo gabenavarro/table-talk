@@ -446,7 +446,8 @@ def _action_row(ev, blink, query, changed):
             with ui.element("div").classes("ttl"):
                 _cell(ev.get("background", ""), query)
                 if blink:   # exactly one cursor on the page: the newest thing waiting on you
-                    ui.label("▉").classes("cursor")
+                    cur = ui.label("▉").classes("cursor")
+                    cur.props["title"] = "newest action waiting on you"
             # no guide glyph: .sub draws the whole tree guide as one rule, because
             # a per-row ├/└ came apart the moment `why` wrapped past one line
             for field in ("why", "rec"):
@@ -952,6 +953,9 @@ def selftest():
         "the id button's data-id prop must be ASSIGNED; COPY_JS reads it"
     assert 'btn.props["data-path"] = resolved' in code, \
         "the link button's path must be ASSIGNED too - a .props() string is parsed"
+    assert 'cur.props["title"]' in code and "newest action waiting on you" in code, \
+        "the cursor glyph must explain itself: a green blinking box with no " \
+        "tooltip reads as a rendering artifact (it was circled in a bug report)"
     sh = [n.lineno for n in ast.walk(ast.parse(src))
           if isinstance(n, ast.Call) and any(k.arg == "shell" for k in n.keywords)]
     assert not sh, (
