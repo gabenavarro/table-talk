@@ -130,6 +130,18 @@ def add_diagram(path, title, mermaid):
     return i
 
 
+def with_extras(fields, args):
+    """The optional extras action/task/progress share. Only a flag that was
+    actually given (and non-empty) lands in the event: fold() shallow-merges
+    by id, so a null written here would CLEAR the field on every later
+    progress update that did not repeat it."""
+    for k in ("intuitive", "diagram"):
+        v = getattr(args, k, None)
+        if v:
+            fields[k] = v
+    return fields
+
+
 def update(id_, fields):
     """Append a partial update to the file that contains id_ (folding is per-file)."""
     f = find_file_with_id(id_)
@@ -243,6 +255,11 @@ def selftest():
             raise AssertionError("done on a diagram must be rejected")
         except SystemExit:
             pass
+    from types import SimpleNamespace as NS
+    assert with_extras({"a": 1}, NS(diagram="x", intuitive=None)) == {"a": 1, "diagram": "x"}
+    assert with_extras({}, NS()) == {}, "absent flags write nothing"
+    assert with_extras({}, NS(diagram="", intuitive="i")) == {"intuitive": "i"}, \
+        "an empty string is not an extra - it must not land in the event"
     # serve_refusal: pure, so both directions are testable without exec'ing uv
     assert serve_refusal({}, False) is None, "a human terminal is never refused"
     assert serve_refusal({"CLAUDE_CODE_SSE_PORT": "1"}, False) is None, \
@@ -266,14 +283,17 @@ def main():
     a.add_argument("--why", required=True)
     a.add_argument("--rec", required=True)
     a.add_argument("--project")
+    a.add_argument("--diagram", help="small ASCII sketch drawn under the item (≤40 cols)")
 
     t = sub.add_parser("task", help="record background work")
     t.add_argument("what")
     t.add_argument("--project")
+    t.add_argument("--diagram", help="small ASCII sketch drawn under the item (≤40 cols)")
 
     pr = sub.add_parser("progress", help="update progress on an item")
     pr.add_argument("id")
     pr.add_argument("text")
+    pr.add_argument("--diagram", help="add or replace the item's ASCII sketch")
 
     d = sub.add_parser("done", help="mark an item done")
     d.add_argument("id")
@@ -301,12 +321,14 @@ def main():
     if args.selftest:
         selftest()
     elif args.cmd == "action":
-        print(add_event(args.project, {"type": "action", "status": "open",
-              "background": args.background, "why": args.why, "rec": args.rec}))
+        print(add_event(args.project, with_extras(
+            {"type": "action", "status": "open", "background": args.background,
+             "why": args.why, "rec": args.rec}, args)))
     elif args.cmd == "task":
-        print(add_event(args.project, {"type": "task", "status": "open", "what": args.what}))
+        print(add_event(args.project, with_extras(
+            {"type": "task", "status": "open", "what": args.what}, args)))
     elif args.cmd == "progress":
-        update(args.id, {"progress": args.text})
+        update(args.id, with_extras({"progress": args.text}, args))
     elif args.cmd == "done":
         update(args.id, {"status": "done"})
     elif args.cmd == "term":
