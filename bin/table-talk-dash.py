@@ -8,6 +8,7 @@ import argparse
 import json
 import logging
 import subprocess
+import sys
 import time
 from datetime import datetime
 from pathlib import Path
@@ -318,7 +319,7 @@ def link_roots(cfg):
             *(Path(r).expanduser() for r in cfg["links"]["extra_roots"] if isinstance(r, str))]
 
 
-def open_path(path, cfg, run=subprocess.run, extra_roots=()):
+def open_path(path, cfg, run=subprocess.Popen, extra_roots=()):
     """Open one path in the configured command, re-deriving confinement HERE.
 
     The string arrives from a click on markup built out of a log file, so it is
@@ -341,9 +342,9 @@ def open_path(path, cfg, run=subprocess.run, extra_roots=()):
     if len(spans) != 1 or spans[0][2] != path:
         return
     try:
-        run([cfg["links"]["open_command"], path], check=False)
-    except OSError:
-        pass
+        run([cfg["links"]["open_command"], path])
+    except OSError as e:
+        print(f"table-talk: could not open {path!r}: {e}", file=sys.stderr)
 
 
 def nearest_claude_md(start, home):
@@ -780,7 +781,7 @@ def selftest():
 
         def run(cmd, **kw):
             assert isinstance(cmd, list), f"the command must be an argv LIST, got {type(cmd)}"
-            assert kw == {"check": False}, f"no shell=True, ever: {kw}"
+            assert kw == {}, f"no shell=True, ever: {kw}"
             argv.append(cmd)
 
         open_path(str(real), cfg, run)

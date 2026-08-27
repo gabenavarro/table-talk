@@ -143,7 +143,7 @@ def cmd_serve(port):
         sys.exit("error: uv not found on PATH - install from https://docs.astral.sh/uv/")
     # --port is passed ONLY when it was given: unset, the dashboard reads
     # server.port out of the config, and forwarding a default here would beat it.
-    argv = [uv, "run", "--script", str(dash)] + (["--port", str(port)] if port else [])
+    argv = [uv, "run", "--script", str(dash)] + (["--port", str(port)] if port is not None else [])
     os.execv(uv, argv)
 
 
