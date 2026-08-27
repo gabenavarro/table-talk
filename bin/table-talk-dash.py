@@ -573,7 +573,19 @@ def _hits(evs, query):
     return bool((query or "").strip()) and any(_dim(ev, query) == "" for ev in evs)
 
 
-def _prompt(cls, title, count, toggles=None, opened=None, key="", force=False):
+def bar_for(open_n, done_n):
+    """A section's state as glyphs: █ per item still wanting attention, ░ per
+    resolved one. Capped like the footer's cells so a long section cannot
+    wreck the prompt line."""
+    open_n, done_n = max(0, open_n), max(0, done_n)
+    if open_n + done_n > MAX_CELLS:               # scale, never overflow
+        total = open_n + done_n
+        open_n = round(MAX_CELLS * open_n / total)
+        done_n = MAX_CELLS - open_n
+    return "█" * open_n, "░" * done_n
+
+
+def _prompt(cls, title, count, toggles=None, opened=None, key="", force=False, bar=None):
     """A section header as a shell prompt line: '❯ actions --open (3)'.
 
     When `toggles` is given, clicking the line shows or hides that container —
@@ -581,6 +593,7 @@ def _prompt(cls, title, count, toggles=None, opened=None, key="", force=False):
     dict owned by the caller and outliving this render, so a section the user
     expanded is still expanded after the next poll rebuilds the body. `force`
     opens the section for this render only, without touching what the user chose.
+    `bar` is a (filled, empty) glyph pair shown only while the section is shut.
     """
     from nicegui import ui
     shown = force or bool(opened and opened.get(key))
@@ -589,9 +602,16 @@ def _prompt(cls, title, count, toggles=None, opened=None, key="", force=False):
         ui.label(title)
         tail = "" if toggles is None else (" ▾" if shown else " ▸")
         caret = ui.label(f"({count}){tail}").classes("n")
+        # Shown only while the section is shut: open, the rows themselves say it.
+        bar_el = ui.element("div").classes("bar-box")
+        if bar:
+            with bar_el:
+                ui.label(bar[0]).classes("bar")
+                ui.label(bar[1]).classes("bar e")
     if toggles is None:
         return
     toggles.set_visibility(shown)
+    bar_el.set_visibility(bool(bar) and not shown)
 
     def flip(_):
         # Toggle against the LIVE visibility. `force` and `shown` are constants
@@ -602,6 +622,7 @@ def _prompt(cls, title, count, toggles=None, opened=None, key="", force=False):
         now = not toggles.visible
         opened[key] = now
         toggles.set_visibility(now)
+        bar_el.set_visibility(bool(bar) and not now)
         caret.set_text(f"({count}) " + ("▾" if now else "▸"))
 
     line.on("click", flip)
@@ -628,25 +649,40 @@ def render_window_body(container, state, newest_action_id, query="", changed=(),
     from nicegui import ui
     opened = getattr(container, "tt_open", None)
     if opened is None:
-        opened = container.tt_open = {"gls": "glossary" not in collapsed,
-                                      "ok": "done" not in collapsed,
-                                      "dia": "diagrams" not in collapsed}
+        opened = container.tt_open = {"act": "actions" not in collapsed,
+                                      "job": "jobs" not in collapsed,
+                                      "dia": "diagrams" not in collapsed,
+                                      "gls": "glossary" not in collapsed,
+                                      "ok": "done" not in collapsed}
     container.clear()
     with container:
         acts = open_rows(state, "action")
         jobs = open_rows(state, "task")
 
-        _prompt("p-act", "actions --open", len(acts))
-        if not acts:
-            ui.label("nothing needs you").classes("empty")
-        for ev in acts:
-            _action_row(ev, str(ev["id"]) == newest_action_id, query, str(ev["id"]) in changed)
+        done = done_rows(state)
+        done_a = sum(1 for e in done if e.get("type") == "action")
 
-        _prompt("p-job", "jobs", len(jobs))
-        if not jobs:
-            ui.label("nothing running").classes("empty")
-        for ev in jobs:
-            _task_row(ev, query, str(ev["id"]) in changed)
+        acts_box = ui.element("div")
+        with acts_box:
+            if not acts:
+                ui.label("nothing needs you").classes("empty")
+            for ev in acts:
+                _action_row(ev, str(ev["id"]) == newest_action_id, query,
+                            str(ev["id"]) in changed)
+        _prompt("p-act", "actions --open", len(acts), toggles=acts_box, opened=opened,
+                key="act", force=_hits(acts, query), bar=bar_for(len(acts), done_a))
+        acts_box.move(container, -1)
+
+        jobs_box = ui.element("div")
+        with jobs_box:
+            if not jobs:
+                ui.label("nothing running").classes("empty")
+            for ev in jobs:
+                _task_row(ev, query, str(ev["id"]) in changed)
+        _prompt("p-job", "jobs", len(jobs), toggles=jobs_box, opened=opened,
+                key="job", force=_hits(jobs, query),
+                bar=bar_for(len(jobs), len(done) - done_a))
+        jobs_box.move(container, -1)
 
         # Diagrams are reference material like the glossary, but they exist to
         # be LOOKED at - the terminal cannot render mermaid, the reply points
@@ -660,7 +696,8 @@ def render_window_body(container, state, newest_action_id, query="", changed=(),
                 for ev in dias:
                     _diagram_row(ev, query)
             _prompt("p-mag", "diagrams", len(dias), toggles=dia_box,
-                    opened=opened, key="dia", force=_hits(dias, query))
+                    opened=opened, key="dia", force=_hits(dias, query),
+                    bar=bar_for(0, len(dias)))
             dia_box.move(container, -1)
 
         # Glossary and done are collapsed until the user opens them or a query
@@ -672,16 +709,17 @@ def render_window_body(container, state, newest_action_id, query="", changed=(),
             for ev in terms:
                 _term_row(ev, query)
         _prompt("p-gls", "glossary", len(terms), toggles=gls_box,
-                opened=opened, key="gls", force=_hits(terms, query))
+                opened=opened, key="gls", force=_hits(terms, query),
+                bar=bar_for(0, len(terms)))
         gls_box.move(container, -1)
 
-        done = done_rows(state)
         done_box = ui.element("div")
         with done_box:
             for ev in done:
                 _done_row(ev, query)
         _prompt("p-ok", "done", len(done), toggles=done_box,
-                opened=opened, key="ok", force=_hits(done, query))
+                opened=opened, key="ok", force=_hits(done, query),
+                bar=bar_for(0, len(done)))
         done_box.move(container, -1)
 
 
@@ -840,6 +878,11 @@ def selftest():
     assert resolved_cells(0, 0) == ("", ""), "a session with nothing recorded shows no cells"
     on, off = resolved_cells(30, 60)
     assert len(on) + len(off) == 20, "cells cap at 20 so a long session cannot wreck the footer"
+    assert bar_for(3, 2) == ("███", "░░")
+    assert bar_for(0, 0) == ("", "")
+    f, e = bar_for(30, 30)
+    assert len(f) + len(e) == MAX_CELLS, "a long section is scaled, never overflowed"
+    assert bar_for(-1, 0) == ("", ""), "a negative count draws nothing"
     assert "data-id" in COPY_JS and "clipboard" in COPY_JS
     assert "[0-9a-f]{4,}" in COPY_JS, \
         "what COPY_JS builds is a SHELL COMMAND the user pastes, so the id it " \
@@ -1122,6 +1165,10 @@ def selftest():
     assert '"dia": "diagrams" not in collapsed' in code, \
         "diagrams exist to be LOOKED at - the reply points the user here - so " \
         "unlike glossary/done they start open unless the config folds them"
+    for key in ('"act": "actions" not in collapsed', '"job": "jobs" not in collapsed'):
+        assert key in code, \
+            f"{key}: every section collapses, and which ones START shut is the " \
+            "config's call, named the way the config names them"
     assert '("action", "task", "term", "diagram")' in code, \
         "the statusline tally must count diagram rows: the filter highlights " \
         "them, and '0/N rows match' beside a visibly matching row is a lie"
@@ -1144,6 +1191,9 @@ def selftest():
     assert code.index('ui.label("int")') < code.index('for field in ("why", "rec")'), \
         "int reads FIRST: it is the line for someone with no context, and " \
         "why/rec argue a decision that line has to set up"
+    assert ".pr .bar" in css and ".pr .bar.e" in css, \
+        "a collapsed section still has to report itself: █ per item wanting " \
+        "attention, ░ per resolved one, in the section's own colour"
     assert ".p-mag" in css and ".id-mag" in css and ".mmd" in css, \
         "the diagrams section needs its prompt, title-cell and body styles"
     assert ".win-b .row:has(.id-mag)" in css, \
