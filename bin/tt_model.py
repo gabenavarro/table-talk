@@ -270,6 +270,30 @@ def art_spans(text):
     return out
 
 
+def boxed(art):
+    """A sketch inside a drawn frame, so it reads as one object rather than
+    stray text on the card.
+
+    Real glyphs, never a CSS border: this app draws its bars, meters and tree
+    guides with characters precisely so everything lands on the same
+    fixed-width grid, and a frame faked in CSS would be the one box that does
+    not sit on it. art_spans classifies the frame as structure, so it recedes
+    to the faint ink and the labels inside still read first.
+
+    Every line is padded to the widest one, or the right edge zigzags. Blank
+    lines top and bottom are dropped (they would draw an empty row inside the
+    frame); a blank line INSIDE the art is the author's spacing and stays.
+    """
+    lines = [ln.rstrip() for ln in str(art or "").strip("\n").split("\n")]
+    if not any(lines):
+        return ""
+    w = max(len(ln) for ln in lines)
+    rule = "─" * (w + 2)
+    return "\n".join(["┌" + rule + "┐"]
+                     + [f"│ {ln:<{w}} │" for ln in lines]
+                     + ["└" + rule + "┘"])
+
+
 _TEXT_FIELDS = ("id", "background", "why", "rec", "what", "progress",
                 "term", "intuitive", "technical", "title", "mermaid", "diagram")
 
@@ -566,6 +590,24 @@ def selftest():
         "words inside a box are content; strokes and their padding recede"
     assert art_spans("") == [] and art_spans(None) == []
     assert art_spans("   ") == [("   ", False)], "all-neutral art is one content run"
+
+    # boxed: the frame is drawn, not styled, so it sits on the same grid
+    assert boxed("a->b").split("\n") == ["┌──────┐", "│ a->b │", "└──────┘"]
+    assert boxed("x\nlonger").split("\n") == [
+        "┌────────┐", "│ x      │", "│ longer │", "└────────┘"], \
+        "every line pads to the widest one, or the right edge zigzags"
+    assert boxed("") == "" and boxed(None) == "" and boxed("  \n \n") == "", \
+        "nothing to frame draws no frame - an empty box is worse than no box"
+    assert boxed("\na\n") == boxed("a"), "blank lines top and bottom are not rows"
+    assert len(boxed("a\n\nb").split("\n")) == 5, \
+        "a blank line INSIDE the art is the author's spacing and keeps its row"
+    assert boxed("ab  ").split("\n")[0] == "┌────┐", \
+        "trailing spaces must not widen the frame past the art it holds"
+    for _line in boxed("a->b\nlonger line").split("\n"):
+        assert len(_line) == len(boxed("a->b\nlonger line").split("\n")[0]), \
+            "every row of the frame is the same width or the box does not close"
+    assert all(s for _, s in art_spans(boxed("x"))[:1]), \
+        "the frame reads as structure, so it recedes and the labels read first"
     _arng = _random.Random(20260827)
     _art_alphabet = "ab XY01−│┌┘├→▲▶█░ -|+/\\<>^v_=~*.:\n\t"
     for _ in range(500):
