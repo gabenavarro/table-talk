@@ -1047,6 +1047,9 @@ def selftest():
     assert '"dia": "diagrams" not in collapsed' in code, \
         "diagrams exist to be LOOKED at - the reply points the user here - so " \
         "unlike glossary/done they start open unless the config folds them"
+    assert '("action", "task", "term", "diagram")' in code, \
+        "the statusline tally must count diagram rows: the filter highlights " \
+        "them, and '0/N rows match' beside a visibly matching row is a lie"
     assert ".p-mag" in css and ".id-mag" in css and ".mmd" in css, \
         "the diagrams section needs its prompt, title-cell and body styles"
     assert ".win-b .row:has(.id-mag)" in css, \
@@ -1729,7 +1732,7 @@ def main(port=None):
         for k in visible:
             for ev in states[k].values():
                 typ = ev.get("type")
-                if typ not in ("action", "task", "term"):
+                if typ not in ("action", "task", "term", "diagram"):
                     continue
                 rows += 1
                 matched += not _dim(ev, query)
