@@ -1,0 +1,24 @@
+name: test
+
+# Every selftest this repo has, on every pull request and on main. There is no
+# framework to install: each file pins its own behaviour in a selftest() and
+# ./test.sh runs all four.
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # uv runs bin/table-talk-dash.py, which declares its own dependency in a
+      # PEP 723 header; the other three selftests are stdlib-only python3.
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+      - run: ./test.sh
