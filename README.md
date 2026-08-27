@@ -48,7 +48,7 @@ install.sh symlinks the CLI into ~/.local/bin — make sure that's on your PATH.
     table-talk term "FVA" --intuitive "range of possible flux" --technical "LP min/max per reaction at fixed optimum"
     table-talk diagram $'flowchart LR\n  a --> b' --title "data flow"   # dashboard renders it
     table-talk show            # plain-text dump
-    table-talk serve           # dashboard
+    table-talk serve           # dashboard (run it yourself — it refuses inside a Claude session)
 
 ## Dashboard
 

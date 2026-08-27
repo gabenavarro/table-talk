@@ -107,7 +107,22 @@ technical = the precise definition, jargon spelled out.
 
 - They reference rows by ID ("a3f9: go with 2"). Act on that item, then `table-talk done a3f9`.
 - IDs are 4 hex chars, printed by the CLI — never invent one; always use the printed value.
-- At session start, mention `table-talk serve` once if the dashboard might not be running.
+- At session start, if the dashboard is down (check below), mention `table-talk serve` once — never run it yourself.
+
+## The server — never run it, and end the turn
+
+- `table-talk serve` never exits (it becomes the dashboard process). Never run
+  it from a session: a foreground call hangs until the tool timeout, a
+  background task never completes. The CLI refuses under `CLAUDECODE`; do not
+  work around it with `--force` or by launching the dash script directly — if
+  the dashboard is down, say so once in the reply body and move on.
+- Liveness: `curl -sf -o /dev/null --max-time 2 http://127.0.0.1:8731/ && echo up || echo down`.
+  Never `pgrep -f "table-talk serve"` — serve execs into table-talk-dash.py,
+  so that pattern matches nothing even while the dashboard runs.
+- Recording commands (`action`, `task`, `progress`, `done`, `term`, `diagram`)
+  all exit immediately. After printing the closing tables, END THE TURN: never
+  sleep, loop, or poll `table-talk show` or the log files waiting for an
+  answer — the answer arrives as the user's next message, referencing the ID.
 
 ## The dashboard
 
