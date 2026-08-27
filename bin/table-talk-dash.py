@@ -122,12 +122,21 @@ document.addEventListener('click', e => {
 # you are looking at your editor is a change you never saw. So the seen-watermark
 # is advanced by the Page Visibility API, not by a timer - it FREEZES while the
 # tab is hidden, and every row that moved meanwhile keeps its gutter until you
-# are genuinely back. Only the two transitions are sent; the server assumes
-# visible until told otherwise, which is the safe default (no stale gutters).
+# are genuinely back.
+#
+# The state is announced ONCE at startup as well as on every transition. A tab
+# that was already hidden when it loaded - session restore, opened in the
+# background, reloaded from another tab - fires no visibilitychange, ever, and
+# without the announcement the server would assume it is being watched and clear
+# gutters nobody saw. The retry is for the Vue root: emitEvent needs it mounted,
+# and NiceGUI queues the message itself until the socket handshake.
 VISIBILITY_JS = """<script>
-document.addEventListener('visibilitychange', () => {
-  if (window.emitEvent) emitEvent('tt-seen', document.visibilityState);
-});
+const ttSeen = () => {
+  try { emitEvent('tt-seen', document.visibilityState); }
+  catch (e) { setTimeout(ttSeen, 200); }
+};
+document.addEventListener('visibilitychange', ttSeen);
+ttSeen();
 </script>"""
 
 # Every key the page binds. The statusline chips are built from this same dict
@@ -524,6 +533,9 @@ def selftest():
     assert changed_ids({"x": {"id": "x", "type": "action"}}, 0) == set(), \
         "a row with no ts predates every watermark; it must not mark itself"
     assert "visibilitychange" in VISIBILITY_JS and "emitEvent" in VISIBILITY_JS
+    assert "\nttSeen();" in VISIBILITY_JS, \
+        "a tab that was ALREADY hidden when it loaded fires no visibilitychange " \
+        "ever, so the state must also be announced once at startup"
     assert ".win-b .row.changed{" in css and ".win-b .row.changed-job{" in css, \
         "gutter colours must differ by kind, and stay scoped off Quasar's .row"
     print("ok")
@@ -585,14 +597,18 @@ def main(port):
     needs_me = bool(store("needs_me", False))
     current = store("current", None)   # the window m/z/f act on
     on_wall = []                       # what poll() last put on the wall, in order
-    # Everything newer than seen_ts carries a gutter. Starting it at NOW is what
-    # makes a freshly opened dashboard quiet: a change you were never here for is
-    # not a change you missed. Deliberately not persisted - it is "since you last
-    # looked at this tab", and a reload is you looking.
-    seen_ts = time.time()
-    # ponytail: one server-wide flag, like every other bit of state here - with
-    # two tabs open the hidden one un-freezes the watermark for both. Per-client
-    # tracking if this ever stops being one user on one monitor.
+    # Everything newer than a window's watermark carries a gutter. Per WINDOW,
+    # not one for the page: a window off the wall (zoom, scope, needs-me) is one
+    # you could not have seen, so its watermark stands still until it is back and
+    # you have had a poll to look at it. The floor is NOW, which is what makes a
+    # freshly opened dashboard quiet - a change you were never here for is not a
+    # change you missed. Deliberately not persisted: the watermark means "since
+    # you last looked", and a reload is you looking.
+    opened_ts = time.time()
+    seen_at = {}                       # session key -> when its rows were last on screen
+    # Not shared between tabs: NiceGUI gives each client its own run of this
+    # function, so two dashboards keep independent watermarks (measured - a
+    # hidden tab held its gutter while a visible one cleared its own).
     watching = True                    # tab visible until the page says otherwise
 
     def on_seen(e):
@@ -1069,7 +1085,7 @@ def main(port):
                 dress(key, windows[key])
 
     def poll():
-        nonlocal layout, on_wall, seen_ts
+        nonlocal layout, on_wall
         # read the clock BEFORE the files: a write that lands between the two
         # would otherwise be stamped as already seen and never get its gutter
         now = time.time()
@@ -1136,7 +1152,7 @@ def main(port):
             # the gutter set is part of the signature, or the window that must
             # DROP its gutters never repaints: its data did not change, that is
             # the whole point of it
-            changed = changed_ids(states[k], seen_ts)
+            changed = changed_ids(states[k], seen_at.get(k, opened_ts))
             sig = (query, newest, states[k], changed)
             if win["sig"] != sig:
                 win["sig"] = sig
@@ -1147,15 +1163,17 @@ def main(port):
                             (win["ix"], f":{where[k][1]}")):
                 if el.text != txt:
                     el.set_text(txt)
-        # Only now, and only if you are actually looking, does what we just drew
-        # count as seen. Hidden, this line never runs and the gutters pile up.
+        # Only now, only if you are actually looking, and only for the windows we
+        # just drew, does anything count as seen. Hidden, this never runs and the
+        # gutters pile up; off the wall, that window's watermark stays put.
         # int(now) - 1, not now: bin/table-talk stamps ts in WHOLE seconds, so an
         # event written at 100.9 carries ts=100 and a float watermark of 100.3
         # would mark it already-seen. One second back is the newest watermark
         # that cannot swallow a change - it costs a redundant gutter for one poll
         # and never a missed one.
         if watching:
-            seen_ts = int(now) - 1
+            for k in visible:
+                seen_at[k] = int(now) - 1
 
         # The tally counts EVERY session, not just what is on the wall: scope and
         # zoom are choices about the view, and the tab title and the toast hang
