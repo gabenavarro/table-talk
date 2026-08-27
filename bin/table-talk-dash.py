@@ -427,12 +427,16 @@ def main(port):
     def on_window_action(key, action):   # replaced in Task 12
         pass
 
-    def build_window(key, project, index, state):
+    def build_window(key, project):
+        """Everything about a window that never changes: its project is its file's
+        name. The tmux index is NOT one of those - it is position by recency
+        within the project, so every older sibling shifts down when a newer
+        session file lands. It is set from `where` on every tick instead."""
         el = ui.element("div").classes("win").props(f'data-window="{key}"')
         with el:
             with ui.element("div").classes("win-t"):
                 ui.label(project).classes("nm")
-                ui.label(f":{index}").classes("ix")
+                ix = ui.label("").classes("ix")
                 bell = ui.label("!").classes("bell")
                 actv = ui.label("#").classes("actv")
                 mark = ui.label("M").classes("fl-m")
@@ -450,7 +454,7 @@ def main(port):
             with ui.element("div").classes("win-f"):
                 cells = ui.element("div").classes("cells")
                 tally = ui.label("")
-        return {"el": el, "body": body, "bell": bell, "actv": actv, "mark": mark,
+        return {"el": el, "body": body, "ix": ix, "bell": bell, "actv": actv, "mark": mark,
                 "zoom": zoom, "when": when, "cells": cells, "tally": tally,
                 "hot": False, "latest": 0, "sig": None}
 
@@ -499,7 +503,12 @@ def main(port):
         buckets = M.pack(visible, cols, weights, marks) if visible else []
         with wall:
             if not visible:
-                ui.label("no sessions yet — record something with table-talk").classes("tt-none")
+                # A query can never empty the wall - it dims, it never hides - so
+                # scope is the only thing that can, and saying "no sessions yet"
+                # while sessions plainly exist would be a lie.
+                ui.label(f"nothing under {scope} — clear the scope to see every session"
+                         if scope else
+                         "no sessions yet — record something with table-talk").classes("tt-none")
             for _ in buckets:
                 columns.append(ui.element("div").classes("col"))
         for bucket, container in zip(buckets, columns):
@@ -522,7 +531,7 @@ def main(port):
         for key in order:
             if key not in windows:
                 with attic:
-                    windows[key] = build_window(key, *where[key], states[key])
+                    windows[key] = build_window(key, where[key][0])
 
         # Scope and zoom choose what is on the wall. The query never does: the
         # filter dims, it never hides, so an open action cannot leave the wall.
@@ -560,9 +569,12 @@ def main(port):
             if win["sig"] != sig:
                 win["sig"] = sig
                 paint_window(win, k, states[k], newest, query)
-            age = ago(win["latest"]) if win["latest"] else ""   # advances with no new data
-            if win["when"].text != age:
-                win["when"].set_text(age)
+            # both advance without the window's own data changing: age with the
+            # clock, the tmux index whenever a newer sibling session appears
+            for el, txt in ((win["when"], ago(win["latest"]) if win["latest"] else ""),
+                            (win["ix"], f":{where[k][1]}")):
+                if el.text != txt:
+                    el.set_text(txt)
 
     def on_query():
         """Dim alone leaves the match off-screen on half of realistic queries with
