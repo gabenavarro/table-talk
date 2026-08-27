@@ -531,7 +531,7 @@ def _art_sub(ev):
     ui.label runs split by tt_model.art_spans - structure strokes in the
     faint ink, labels in the full ink - never as markup: the art comes out
     of a LOG FILE, and a label's text binding cannot become HTML."""
-    art = ev.get("diagram")
+    art = M.boxed(ev.get("diagram"))
     if not art:
         return
     from nicegui import ui
@@ -1210,6 +1210,10 @@ def selftest():
     assert '("action", "task", "term", "diagram")' in code, \
         "the statusline tally must count diagram rows: the filter highlights " \
         "them, and '0/N rows match' beside a visibly matching row is a lie"
+    assert "M.boxed(ev.get(\"diagram\"))" in code, \
+        "the sketch is FRAMED before it is split: the frame is drawn in glyphs " \
+        "so it sits on the same fixed-width grid as the art it holds, which a " \
+        "CSS border could never do"
     assert "M.art_spans" in code, \
         "art is split by the property-tested model classifier and rendered as " \
         "label runs - never raw, never markup: it comes out of a LOG FILE"
