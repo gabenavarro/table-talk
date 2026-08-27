@@ -190,6 +190,8 @@ def weight(state):
             units += 2
         elif typ == "diagram":
             units += 6      # rendered SVG: roughly an action's height, plus room
+        if typ in ("action", "task") and ev.get("diagram"):
+            units += 1 + str(ev["diagram"]).count("\n") // 2
     return units
 
 
@@ -214,8 +216,45 @@ def pack(keys, ncols, weights, marked=()):
     return cols
 
 
+_ART_ASCII = set("-|+/\\<>^v_=~*.:'`,;()[]{}#")
+
+
+def _is_structure(ch):
+    """A stroke character, as opposed to label text."""
+    if ch in _ART_ASCII:
+        return True
+    o = ord(ch)
+    return (0x2190 <= o <= 0x21FF     # arrows
+            or 0x2500 <= o <= 0x259F  # box drawing + block elements
+            or 0x25A0 <= o <= 0x25FF)  # geometric shapes
+
+
+def art_spans(text):
+    """Split ASCII art into [(chunk, is_structure)] runs.
+
+    Structure is box-drawing, arrows, geometric shapes and ASCII stroke
+    characters; everything else (labels) is content. Whitespace is neutral and
+    extends whatever run is open, so the chunks reassemble the art losslessly
+    - the renderer colours structure with the faint ink and labels with the
+    full ink, and a split that dropped a byte would redraw different art.
+    """
+    if not text:
+        return []
+    out, cur, cls = [], "", None
+    for ch in str(text):
+        k = cls if ch in " \t\n" else _is_structure(ch)
+        if k != cls and cls is not None and k is not None:
+            out.append((cur, cls))
+            cur, cls = "", k
+        cur += ch
+        if cls is None:
+            cls = k
+    out.append((cur, bool(cls)))
+    return out
+
+
 _TEXT_FIELDS = ("id", "background", "why", "rec", "what", "progress",
-                "term", "intuitive", "technical", "title", "mermaid")
+                "term", "intuitive", "technical", "title", "mermaid", "diagram")
 
 
 def row_text(ev):
@@ -490,6 +529,32 @@ def selftest():
             assert _strip.sub("", marked(_t, _q)) == _html.escape(_t), \
                 f"round-trip must equal html.escape for {_t!r} / {_q!r}"
             assert "".join(c for c, _ in parts(_t, _q)) == _t, "chunks must reassemble losslessly"
+
+    # art_spans: strokes recede, labels read - and the chunks must reassemble.
+    assert art_spans("A->B") == [("A", False), ("->", True), ("B", False)]
+    assert art_spans("┌─┐") == [("┌─┐", True)], "box drawing is structure"
+    assert [c for c, s in art_spans("│ logs │") if not s] == ["logs "], \
+        "words inside a box are content; strokes and their padding recede"
+    assert art_spans("") == [] and art_spans(None) == []
+    assert art_spans("   ") == [("   ", False)], "all-neutral art is one content run"
+    _arng = _random.Random(20260827)
+    _art_alphabet = "ab XY01−│┌┘├→▲▶█░ -|+/\\<>^v_=~*.:\n\t"
+    for _ in range(500):
+        t = "".join(_arng.choice(_art_alphabet) for _ in range(_arng.randint(0, 60)))
+        sp = art_spans(t)
+        assert "".join(c for c, _ in sp) == t, f"chunks must reassemble {t!r}"
+        assert all(c for c, _ in sp), "no empty chunks"
+        assert all(isinstance(s, bool) for _, s in sp)
+
+    art_task = {"a": {"type": "task", "status": "open", "what": "x",
+                      "diagram": "a\nb\nc\nd", "ts": 1}}
+    plain_task = {"a": {"type": "task", "status": "open", "what": "x", "ts": 1}}
+    assert weight(art_task) == weight(plain_task) + 2, \
+        "a 4-line sketch costs the packer 1 + lines//2 units - it is real height"
+    assert weight({"a": {"type": "action", "status": "done", "diagram": "x\ny",
+                         "ts": 1}}) == 1, "a done item's sketch is collapsed with it"
+    assert "flow" in row_text({"id": "x", "type": "task", "diagram": "a->flow"}), \
+        "the filter must see a sketch's labels"
 
     import tempfile as _tf
     with _tf.TemporaryDirectory() as _td:
