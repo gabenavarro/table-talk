@@ -655,6 +655,22 @@ def selftest():
     assert "tabular-nums" in css, "digit columns must align"
     assert "prefers-reduced-motion" in css, "motion must be defeatable"
     assert "ui-monospace" in css and "system-ui" in css, "both faces need a real fallback stack"
+    # The symbol fallbacks: JetBrains Mono lacks braille/▰▱/◐/☀/☾, and unlisted
+    # those fall into SYSTEM fallback - ☾ drew a Tibetan script font, and ☀
+    # (Unicode Emoji property) drew the color emoji font. An author-listed
+    # family beats the browser's implicit emoji fallback, so the stack itself
+    # must carry the coverage.
+    for face in ("--mono", "--prose"):
+        decl = css.split(face + ":")[1].split(";")[0]
+        assert '"Noto Sans Symbols 2"' in decl and '"Noto Sans Symbols"' in decl, \
+            f"{face} must list the symbol fallbacks, or ☀ falls to the color " \
+            "emoji font and ☾ to whatever fontconfig finds first"
+    mono_decl = css.split("--mono:")[1].split(";")[0]
+    assert mono_decl.index('"JetBrains Mono"') < mono_decl.index('"Adwaita Mono"') \
+        < mono_decl.index('"Noto Sans Symbols 2"'), \
+        "fallback order is coverage order: the primary face first, then the " \
+        "MONO-metric symbol source (spinner and bars sit in mono columns), " \
+        "then the proportional Noto pair for what is still missing (☾)"
     assert "--ctp-" not in css, "the Catppuccin palette is gone"
     # hover moves AWAY from the text, which is a different direction per theme
     assert "--hover:#ffffff" in css and "--hover:#191b1c" in css, \

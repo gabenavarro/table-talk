@@ -30,8 +30,22 @@
   --gls:#8a6a10; --gls-2:#b88a28;
   --ok:#4a7038;  --ok-2:#788c5d;
   --mag:#7a4a82;
-  --mono:"JetBrains Mono",ui-monospace,"SF Mono",Menlo,Consolas,monospace;
-  --prose:"Fira Sans",system-ui,-apple-system,"Segoe UI",sans-serif;
+  /* Symbol fallbacks, both faces: JetBrains Mono has no braille (the spinner),
+     ▰▱, ◐, ☀ or ☾. Unlisted, those fall into SYSTEM fallback where each lands
+     in a different font - ☾ drew Jomolhari (a Tibetan script font) and ☀,
+     which carries the Unicode Emoji property, drew the COLOR emoji font: a
+     color sun in the theme toggle beside monochrome ◐/☾. An author-listed
+     family beats the browser's implicit emoji fallback, so the stack plugs its
+     own holes: Adwaita Mono first (mono metrics - the spinner and bars sit in
+     mono columns), the Noto symbol pair for what is still missing (☾). After
+     the real text faces, before the generic, so they only ever serve glyphs
+     the primaries lack. Real emoji (🔴 ✅) are in none of them and still reach
+     the color emoji font. A Nerd Font would not help here: patching adds PUA
+     icons, not these codepoints, and no color emoji. */
+  --mono:"JetBrains Mono","Adwaita Mono",ui-monospace,"SF Mono",Menlo,Consolas,
+    "Noto Sans Symbols 2","Noto Sans Symbols",monospace;
+  --prose:"Fira Sans",system-ui,-apple-system,"Segoe UI",
+    "Noto Sans Symbols 2","Noto Sans Symbols",sans-serif;
 }
 body.body--dark{
   --bg:#1d2021; --surface:#282828; --surface-2:#32302f;
