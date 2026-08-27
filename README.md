@@ -46,7 +46,7 @@ install.sh symlinks the CLI into ~/.local/bin — make sure that's on your PATH.
     table-talk progress "$tid" "epoch 3/10"
     table-talk done "$id"
     table-talk term "FVA" --intuitive "range of possible flux" --technical "LP min/max per reaction at fixed optimum"
-    table-talk task "GPN training" --diagram $'data → train → eval'   # ASCII sketch under the item
+    table-talk task "GPN training" --intuitive "teaching a model to read DNA" --diagram $'data → train → eval'
     table-talk diagram $'flowchart LR\n  a --> b' --title "data flow"   # dashboard renders it
     table-talk show            # plain-text dump
     table-talk serve           # dashboard (run it yourself — it refuses inside a Claude session)
