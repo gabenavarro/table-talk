@@ -279,6 +279,18 @@ body{background:var(--bg);color:var(--ink);margin:0}
 .win-b .row:has(.id-gls){grid-template-columns:96px 1fr}
 .id-gls{min-width:0;overflow-wrap:break-word}
 
+/* the diagrams section: same wider title column as glossary terms, same reason */
+.p-mag{color:var(--mag)}
+.win-b .row:has(.id-mag){grid-template-columns:96px 1fr}
+.id-mag{color:var(--mag);min-width:0;overflow-wrap:break-word}
+/* mermaid's neutral theme assumes a LIGHT ground: node fills are #eee, but
+   edges, arrowheads and free-standing text derive from invert(background) -
+   near-black drawn straight onto the page. So the card paints the white
+   ground the theme assumes, on both palettes; mermaid's own useMaxWidth
+   already caps the SVG at 100% of this box. */
+.mmd{background:#fff;border-radius:3px;padding:6px 8px}
+.mmd svg{display:block}
+
 /* ---- statusline ---- */
 .sl{display:flex;align-items:center;background:var(--surface-2);border-top:1px solid var(--rule);
   font-size:11.5px;color:var(--ink-2);height:28px;padding:0 3px;flex:0 0 28px}

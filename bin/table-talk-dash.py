@@ -246,6 +246,15 @@ THEME_ICONS = {"system": "◐", "light": "☀", "dark": "☾"}
 # fixed-width column rather than being faked with borders.
 GUIDES = {"open": "▾", "closed": "▸", "mid": "├", "last": "└", "line": "│", "none": " "}
 
+# One fixed mermaid theme: in "system" mode the server cannot know the
+# client's prefers-color-scheme, so a per-theme render would be a guess.
+# neutral is the greyscale theme, rendered on the white card .mmd paints
+# (its edges assume a light ground - see tt.css). A per-render directive
+# rather than initialize() config: it travels with each render, per diagram.
+# securityLevel cannot be relaxed the same way - mermaid's directive
+# sanitiser blocks it - so strict stays strict.
+MERMAID_INIT = '%%{init: {"theme": "neutral"}}%%\n'
+
 MAX_CELLS = 20     # a long session must not wreck the footer line
 BAR_CELLS = 14
 
@@ -297,6 +306,11 @@ def done_rows(state):
 def term_rows(state):
     return sorted((e for e in state.values() if e.get("type") == "term"),
                   key=lambda e: e.get("term", "").lower())
+
+
+def diagram_rows(state):
+    return sorted((e for e in state.values() if e.get("type") == "diagram"),
+                  key=lambda e: e.get("ts", 0), reverse=True)
 
 
 def changed_ids(state, since):
@@ -490,6 +504,19 @@ def _term_row(ev, query):
                 _cell(ev.get("technical", ""), query)
 
 
+def _diagram_row(ev, query):
+    """A recorded mermaid diagram. The source comes out of a LOG FILE, so it is
+    rendered at securityLevel strict - the bundled default, restated here so a
+    future config knob cannot silently relax it. A parse error draws mermaid's
+    own error graphic client-side; the server never sees it."""
+    from nicegui import ui
+    with ui.element("div").classes("row" + _dim(ev, query)):
+        ui.label(ev.get("title", "")).classes("id id-mag")
+        with ui.element("div"):
+            ui.mermaid(MERMAID_INIT + str(ev.get("mermaid", "")),
+                       config={"securityLevel": "strict"}).classes("mmd")
+
+
 def _done_row(ev, query):
     """A resolved action or task, dimmed. Keeps its id clickable so a mistaken
     'done' is easy to find again."""
@@ -562,7 +589,8 @@ def render_window_body(container, state, newest_action_id, query="", changed=(),
     opened = getattr(container, "tt_open", None)
     if opened is None:
         opened = container.tt_open = {"gls": "glossary" not in collapsed,
-                                      "ok": "done" not in collapsed}
+                                      "ok": "done" not in collapsed,
+                                      "dia": "diagrams" not in collapsed}
     container.clear()
     with container:
         acts = open_rows(state, "action")
@@ -579,6 +607,21 @@ def render_window_body(container, state, newest_action_id, query="", changed=(),
             ui.label("nothing running").classes("empty")
         for ev in jobs:
             _task_row(ev, query, str(ev["id"]) in changed)
+
+        # Diagrams are reference material like the glossary, but they exist to
+        # be LOOKED at - the terminal cannot render mermaid, the reply points
+        # the user here - so they start open unless the config folds them, and
+        # the header only exists when a diagram does: an empty always-there
+        # section is noise (same rule as the drawer's context footer).
+        dias = diagram_rows(state)
+        if dias:
+            dia_box = ui.element("div")
+            with dia_box:
+                for ev in dias:
+                    _diagram_row(ev, query)
+            _prompt("p-mag", "diagrams", len(dias), toggles=dia_box,
+                    opened=opened, key="dia", force=_hits(dias, query))
+            dia_box.move(container, -1)
 
         # Glossary and done are collapsed until the user opens them or a query
         # finds something inside. Each box is built before the prompt that
@@ -639,6 +682,14 @@ def selftest():
     assert [r["id"] for r in open_rows(st, "task")] == ["c"]
     assert [r["id"] for r in done_rows(st)] == ["b"], "done spans actions and tasks, never terms"
     assert [r["term"] for r in term_rows(st)] == ["FBA"], "terms are cumulative"
+    dst = dict(st, f={"id": "f", "type": "diagram", "title": "Arch",
+                      "mermaid": "flowchart LR", "ts": 6},
+               g={"id": "g", "type": "diagram", "title": "Flow",
+                  "mermaid": "sequenceDiagram", "ts": 7})
+    assert [r["id"] for r in diagram_rows(dst)] == ["g", "f"], "diagrams read newest first"
+    assert diagram_rows(st) == [], "no diagram events, no rows"
+    assert [r["id"] for r in done_rows(dst)] == ["b"], \
+        "a diagram is never an obligation: done still spans actions and tasks only"
     assert _dim(st["a"], "") == "" and _dim(st["a"], "  ") == "", "an empty query dims nothing"
     assert _dim(st["a"], "BG") == "", "a matching row is not dimmed, and matching ignores case"
     assert _dim(st["a"], "kubernetes") == " tt-dim", "a non-matching row dims — it never hides"
@@ -986,6 +1037,21 @@ def selftest():
         "_prompt's flip must toggle against the LIVE visibility - `force` and " \
         "`shown` are constants captured for the render, so a filter-forced " \
         "section evaluated `not True` on every click and went dead after one"
+    assert '"securityLevel": "strict"' in code, \
+        "mermaid source comes out of a LOG FILE; strict is what keeps its " \
+        "labels sanitized - loose would execute whatever the log carries"
+    assert '%%{init:' in code and '"theme": "neutral"' in code, \
+        "one fixed mermaid theme, readable on both grounds: in system mode the " \
+        "server cannot know the client's prefers-color-scheme, so a per-theme " \
+        "render would be a guess"
+    assert '"dia": "diagrams" not in collapsed' in code, \
+        "diagrams exist to be LOOKED at - the reply points the user here - so " \
+        "unlike glossary/done they start open unless the config folds them"
+    assert ".p-mag" in css and ".id-mag" in css and ".mmd" in css, \
+        "the diagrams section needs its prompt, title-cell and body styles"
+    assert ".win-b .row:has(.id-mag)" in css, \
+        "a diagram title shares the row grid with 4-hex ids: without its own " \
+        "wider column it overflows the 42px id track (same bug .id-gls had)"
     print("ok")
 
 

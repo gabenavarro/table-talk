@@ -188,6 +188,8 @@ def weight(state):
             units += 3 + chars // 110
         elif typ == "task":
             units += 2
+        elif typ == "diagram":
+            units += 6      # rendered SVG: roughly an action's height, plus room
     return units
 
 
@@ -213,7 +215,7 @@ def pack(keys, ncols, weights, marked=()):
 
 
 _TEXT_FIELDS = ("id", "background", "why", "rec", "what", "progress",
-                "term", "intuitive", "technical")
+                "term", "intuitive", "technical", "title", "mermaid")
 
 
 def row_text(ev):
@@ -425,6 +427,12 @@ def selftest():
     job2 = {"a": {"type": "task", "status": "open", "what": "x",
                   "progress": "epoch 9/10, still running, no interruption in 45 h", "ts": 1}}
     assert weight(job) == weight(job2), "progress text must not affect packing"
+    dia = {"a": {"type": "diagram", "title": "t", "mermaid": "flowchart LR", "ts": 1}}
+    assert weight(dia) == 7, \
+        "a diagram renders open and tall; the packer must budget for it"
+    assert "flowchart" in row_text({"id": "x", "type": "diagram", "title": "T",
+                                    "mermaid": "flowchart LR"}), \
+        "the filter must see a diagram's source and title"
 
     # pack: greedy shortest column, deterministic, marked first.
     w = {"a": 14, "b": 9, "c": 8, "d": 2}
