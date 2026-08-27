@@ -283,8 +283,14 @@ def boxed(art):
     Every line is padded to the widest one, or the right edge zigzags. Blank
     lines top and bottom are dropped (they would draw an empty row inside the
     frame); a blank line INSIDE the art is the author's spacing and stays.
+
+    Tabs are expanded first: padding counts characters, a browser renders a tab
+    as several columns, and the two disagreeing puts a kink in the frame. A
+    double-width glyph (an emoji) still does that - counting display width
+    needs a table this file will not carry - but a crooked box reads as broken
+    where crooked loose art did not, so the cheap half of the problem is fixed.
     """
-    lines = [ln.rstrip() for ln in str(art or "").strip("\n").split("\n")]
+    lines = [ln.rstrip() for ln in str(art or "").expandtabs(4).strip("\n").split("\n")]
     if not any(lines):
         return ""
     w = max(len(ln) for ln in lines)
@@ -603,6 +609,10 @@ def selftest():
         "a blank line INSIDE the art is the author's spacing and keeps its row"
     assert boxed("ab  ").split("\n")[0] == "┌────┐", \
         "trailing spaces must not widen the frame past the art it holds"
+    _tabbed = boxed("a\tb\nlonger").split("\n")
+    assert len(set(len(ln) for ln in _tabbed)) == 1 and "\t" not in "".join(_tabbed), \
+        "a tab is expanded before padding: padding counts characters, a browser " \
+        "renders a tab as several columns, and the disagreement kinks the frame"
     for _line in boxed("a->b\nlonger line").split("\n"):
         assert len(_line) == len(boxed("a->b\nlonger line").split("\n")[0]), \
             "every row of the frame is the same width or the box does not close"

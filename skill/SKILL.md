@@ -85,8 +85,8 @@ An action or task takes an optional ASCII sketch:
 `table-talk action "..." --why ... --rec ... --diagram $'┌ logs ┐\n│ fold │\n└ wall ┘'`
 — drawn centered under the item on the dashboard in the theme's colours, and
 `table-talk progress <id> "..." --diagram "..."` adds or replaces one on an
-existing item. Keep a sketch at most 36 columns wide and ~12 lines — the
-dashboard draws a frame around it, which adds four columns — and it must
+existing item. Keep a sketch at most 36 columns wide and ~10 lines — the
+dashboard draws a frame around it, adding four columns and two rows — and it must
 fit the narrowest card. Box-drawing and arrows read best (┌─┐ │ ▼ ▲). Lay it
 out PORTRAIT — steps stacked top-to-bottom with ▼ between them, never a wide
 left-to-right chain: cards are narrow, and landscape either wraps or shrinks.
