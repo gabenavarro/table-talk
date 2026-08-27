@@ -240,7 +240,7 @@ def toggle(s, item):
 THEME_MODES = ("system", "light", "dark")
 # Glyphs, not Quasar icon names: the shell is a terminal costume and the only
 # button styling left in the sheet is the statusline's.
-THEME_ICONS = {"system": "◐", "light": "☀", "dark": "☾"}
+THEME_ICONS = {"system": "◐", "light": "○", "dark": "●"}
 
 # tmux choose-tree guides. Kept as literal glyphs so the verticals connect in a
 # fixed-width column rather than being faked with borders.
@@ -785,6 +785,11 @@ def selftest():
         "drawn as a ├/└ glyph per row it broke open the moment `why` wrapped"
     assert "position:relative" in sub, "the guide is absolutely positioned against .sub"
     assert set(THEME_ICONS) == set(THEME_MODES)
+    assert THEME_ICONS == {"system": "◐", "light": "○", "dark": "●"}, \
+        "one geometric family the PRIMARY face carries: ☀ and ☾ are absent " \
+        "from JetBrains Mono and each drew from a different fallback"
+    assert "font-size:15px" in css.split(".dw-theme{")[1].split("}")[0], \
+        "a 12px control at --ink-3 is the complaint; it is a real button"
 
     # theme_css: the config is a second untrusted route into the stylesheet, and
     # the only pure function on that route. Every value below is one a TOML file
@@ -1275,6 +1280,7 @@ def main(port=None):
                     theme_btn = ui.element("button").classes("dw-theme")
                     with theme_btn:
                         theme_lbl = ui.label(THEME_ICONS[mode])
+                    theme_btn.props["title"] = f"theme: {mode} (click to cycle)"
                 drawer = ui.element("div").classes("dw-tree")   # Task 10 renders here
                 # Context files at known locations, not ones found in log text -
                 # built once, like .dw-find above, never rebuilt by a poll. Absent
@@ -1379,6 +1385,7 @@ def main(port=None):
         put("theme", mode)
         apply_theme(mode)
         theme_lbl.set_text(THEME_ICONS[mode])
+        theme_btn.props["title"] = f"theme: {mode} (click to cycle)"
 
     theme_btn.on("click", lambda _: cycle_theme())
 
