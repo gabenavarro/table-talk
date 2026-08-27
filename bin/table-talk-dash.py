@@ -7,6 +7,7 @@
 import argparse
 import json
 import logging
+import subprocess
 import time
 from datetime import datetime
 from pathlib import Path
@@ -16,6 +17,11 @@ import tt_model as M
 from tt_model import DATA_DIR, fold_cached
 
 CSS_PATH = Path(__file__).resolve().parent / "tt.css"
+
+# The loaded config, reachable from a row renderer and from a click handler that
+# outlives the render. main() replaces it; threading it through six row
+# signatures to reach one <button> buys nothing - the process has one config.
+CFG = tt_config.DEFAULTS
 
 
 def load_css():
@@ -299,20 +305,91 @@ def _marked(text, query, cls=None):
     return el.classes(cls) if cls else el
 
 
+def link_roots(cfg):
+    """Where a path found in a log line is allowed to point: the data dir, the
+    project dir the server was started in, and whatever links.extra_roots adds.
+
+    Absolute, because path_spans resolves a relative token against the process
+    CWD - the same CWD this list names, so the two agree by construction.
+    Non-string entries are dropped rather than handed to Path(): extra_roots
+    comes out of a TOML file and _merge only checks that the LIST is a list.
+    """
+    return [DATA_DIR.resolve(), Path.cwd(),
+            *(Path(r).expanduser() for r in cfg["links"]["extra_roots"] if isinstance(r, str))]
+
+
+def open_path(path, cfg, run=subprocess.run):
+    """Open one path in the configured command, re-deriving confinement HERE.
+
+    The string arrives from a click on markup built out of a log file, so it is
+    put back through path_spans - the same gate the link was rendered through -
+    and only a string that is exactly its own resolved, in-root self survives.
+    Nothing about the click is trusted, so a payload that was tampered with is
+    no different from a log line that never should have linked.
+
+    The command is an argv LIST and never shell=True: that is the whole reason a
+    file called 'a;b.md' stays a filename. A click that fails the check does
+    nothing at all, and a command that is not installed is not a crash.
+    """
+    spans = M.path_spans(path, link_roots(cfg))
+    if len(spans) != 1 or spans[0][2] != path:
+        return
+    try:
+        run([cfg["links"]["open_command"], path], check=False)
+    except OSError:
+        pass
+
+
+def _cell(text, query, cls=None):
+    """One cell of user text: the query highlighted, and any path resolving to a
+    real file inside link_roots rendered as a button that opens it.
+
+    One walk over both span lists rather than a second renderer - the text
+    between paths goes through _marked exactly as before, so a cell carries a
+    highlight and a link at once and every run is still escaped AFTER the split.
+    The path reaches the DOM through the props dict, never a .props() string.
+
+    The runs share one box because this cell's slot is a flex item in .ttl and a
+    grid cell in .sub: loose siblings there become layout items and the sentence
+    comes apart.
+    """
+    from nicegui import ui
+    text = text or ""
+    spans = M.path_spans(text, link_roots(CFG))
+    if not spans:
+        return _marked(text, query, cls)
+    box = ui.element("span").classes(f"lk-p {cls}" if cls else "lk-p")
+    with box:
+        i = 0
+        for start, end, resolved in spans:
+            if start > i:
+                _marked(text[i:start], query)
+            btn = ui.element("button").classes("lk")
+            btn.props["data-path"] = resolved
+            btn.props["title"] = f"open {resolved}"
+            with btn:
+                _marked(text[start:end], query)
+            btn.on("click", lambda _, p=resolved: open_path(p, CFG))
+            i = end
+        if i < len(text):
+            _marked(text[i:], query)
+    return box
+
+
 def _action_row(ev, blink, query, changed):
     from nicegui import ui
     with ui.element("div").classes(("row changed" if changed else "row") + _dim(ev, query)):
         _id_button(ev, "id-act")
         with ui.element("div"):
             with ui.element("div").classes("ttl"):
-                _marked(ev.get("background", ""), query)
+                _cell(ev.get("background", ""), query)
                 if blink:   # exactly one cursor on the page: the newest thing waiting on you
                     ui.label("▉").classes("cursor")
             for glyph, label, field in (("├─", "why", "why"), ("└─", "rec", "rec")):
                 with ui.element("div").classes("sub"):
                     ui.label(glyph).classes("gd")
                     ui.label(label).classes("lb")
-                    _marked(ev.get(field, ""), query)
+                    _cell(ev.get(field, ""), query)
 
 
 def _task_row(ev, query, changed):
@@ -320,7 +397,7 @@ def _task_row(ev, query, changed):
     with ui.element("div").classes(("row changed-job" if changed else "row") + _dim(ev, query)):
         _id_button(ev, "id-job")
         with ui.element("div"):
-            _marked(ev.get("what", ""), query, "ttl")
+            _cell(ev.get("what", ""), query, "ttl")
             text = ev.get("progress", "")
             pct = M.percent(text)
             with ui.element("div").classes("meter"):
@@ -335,7 +412,7 @@ def _task_row(ev, query, changed):
                         ui.label(empty).classes("e")
                     ui.label(f"{pct}%").classes("pct")
                 if text:
-                    _marked(text, query, "raw")
+                    _cell(text, query, "raw")
 
 
 def _term_row(ev, query):
@@ -343,11 +420,11 @@ def _term_row(ev, query):
     with ui.element("div").classes("row" + _dim(ev, query)):
         ui.label(ev.get("term", "")).classes("id id-gls")
         with ui.element("div"):
-            _marked(ev.get("intuitive", ""), query, "ttl")
+            _cell(ev.get("intuitive", ""), query, "ttl")
             with ui.element("div").classes("sub"):
                 ui.label("└─").classes("gd")
                 ui.label("def").classes("lb")
-                _marked(ev.get("technical", ""), query)
+                _cell(ev.get("technical", ""), query)
 
 
 def _done_row(ev, query):
@@ -356,7 +433,7 @@ def _done_row(ev, query):
     from nicegui import ui
     with ui.element("div").classes("row" + _dim(ev, query)):
         _id_button(ev, "id-ok")
-        _marked(ev.get("background") or ev.get("what", ""), query, "ttl")
+        _cell(ev.get("background") or ev.get("what", ""), query, "ttl")
 
 
 def _hits(evs, query):
@@ -651,6 +728,53 @@ def selftest():
         "and drops the ! bell to 1.89:1, and target() marks a window .cur on the " \
         "very first paint, so nobody has to click anything to hit it"
 
+    # links: the click handler hands a string that came out of a LOG FILE to a
+    # process launcher, so both halves of that are pinned here.
+    assert link_roots({"links": {"extra_roots": []}}) == [DATA_DIR.resolve(), Path.cwd()], \
+        "the roots are the data dir and the cwd project dir, in that order"
+    assert link_roots({"links": {"extra_roots": ["/srv/x"]}})[2:] == [Path("/srv/x")], \
+        "links.extra_roots is appended to the two implicit roots"
+    assert link_roots({"links": {"extra_roots": [1, None, {"a": 1}, "/srv/x"]}})[2:] == \
+        [Path("/srv/x")], "a non-string extra root is dropped, never handed to Path()"
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td) / "proj"
+        root.mkdir()
+        real = root / "notes.md"
+        real.write_text("x")
+        evil = root / "a;b&`id`.md"       # a filename, and it must stay one
+        evil.write_text("x")
+        outside = Path(td) / "secret.md"
+        outside.write_text("x")
+        cfg = {"links": {"open_command": "ed", "extra_roots": [str(root)]}}
+        argv = []
+
+        def run(cmd, **kw):
+            assert isinstance(cmd, list), f"the command must be an argv LIST, got {type(cmd)}"
+            assert kw == {"check": False}, f"no shell=True, ever: {kw}"
+            argv.append(cmd)
+
+        open_path(str(real), cfg, run)
+        assert argv == [["ed", str(real)]], "an in-root file opens with a two-element argv"
+        argv.clear()
+        open_path(str(evil), cfg, run)
+        assert argv == [["ed", str(evil)]] and argv[0][1] == str(evil), \
+            "a shell metacharacter in a FILENAME reaches argv as one intact element"
+        argv.clear()
+        for hostile in (str(outside), str(root / "missing.md"), str(root), "/etc/passwd",
+                        f"{real} ; rm -rf /", f"x{real}", f"{real}\x00", "", None,
+                        str(root / ".." / outside.name)):
+            open_path(hostile, cfg, run)
+            assert argv == [], f"{hostile!r} must never reach the launcher"
+        open_path(str(real), {"links": {"open_command": "ed", "extra_roots": []}}, run)
+        assert argv == [], "with the root gone from the config, the same path is refused"
+
+        def boom(cmd, **kw):
+            raise FileNotFoundError(cmd[0])
+
+        open_path(str(real), cfg, boom)   # an open_command that is not installed is not a crash
+    assert ".lk-p" in css and ".lk{" in css, \
+        "a link run needs its styles, and the inline rule is what keeps a cell one sentence"
+
     # Everything below reads this file as text: these are properties of the
     # SOURCE, and every one of them is a bug that shipped once already.
     #
@@ -679,6 +803,17 @@ def selftest():
         "never reaches the DOM and click-to-scroll has nothing to find"
     assert 'btn.props["data-id"] = str(ev["id"])' in code, \
         "the id button's data-id prop must be ASSIGNED; COPY_JS reads it"
+    assert 'btn.props["data-path"] = resolved' in code, \
+        "the link button's path must be ASSIGNED too - a .props() string is parsed"
+    sh = [n.lineno for n in ast.walk(ast.parse(src))
+          if isinstance(n, ast.Call) and any(k.arg == "shell" for k in n.keywords)]
+    assert not sh, (
+        f"a shell= keyword at line(s) {sh}. The open command is handed a path "
+        "that came out of a log file: the argv list is the whole defence, and "
+        "prose in a docstring cannot satisfy this check")
+    assert code.count("ui.html(") == 1, \
+        "exactly one ui.html call, fed only by tt_model.marked: a link is built out " \
+        "of ui.label runs and a real <button>, never out of markup"
     assert "ui.run_javascript(scroll_js(key))" in code, \
         "on_focus must go through scroll_js, which hands the key to JS as a " \
         "json.dumps LITERAL. Spliced into a selector, --project \"y'+alert(9)+'z\" " \
@@ -723,7 +858,8 @@ def main(port=None):
 
     # One dict, read where it is needed. A missing or malformed file yields the
     # defaults, so nothing below has to think about that.
-    cfg = tt_config.load()
+    global CFG
+    cfg = CFG = tt_config.load()
     port = cfg["server"]["port"] if port is None else port   # an explicit --port wins
     poll_seconds = cfg["server"]["poll_seconds"]
 

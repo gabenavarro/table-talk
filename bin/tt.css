@@ -181,6 +181,15 @@ body{background:var(--bg);color:var(--ink);margin:0}
 .blocks .e{color:var(--ink-3);opacity:.45}
 .pct{color:var(--ink-2)}
 .raw{color:var(--ink-3);font-size:11px}
+/* A path in the text is a real button, never markup. The runs of one cell have
+   to flow as a sentence, so the box and everything in it stays inline: .ttl is
+   a flex container and .sub a 3-column grid, and loose siblings dropped in
+   either become layout items. Same specificity as '.win-b .row .ttl', so this
+   wins on ORDER - it must stay below it. */
+.win-b .row .lk-p, .win-b .row .lk-p *{display:inline}
+.lk{border:0;background:transparent;font:inherit;padding:0;cursor:pointer;
+  color:var(--job);text-decoration:underline dotted;text-underline-offset:2px}
+.lk:hover{color:var(--caret)}
 /* '>*', never 'span': every glyph the renderer emits is a div, so a span
    selector matches nothing and the sweep silently never animates */
 .scan{display:flex;gap:1px}
