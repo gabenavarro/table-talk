@@ -90,8 +90,8 @@ body{background:var(--bg);color:var(--ink);margin:0}
 .dw-find .q-field__native::placeholder{color:var(--ink-3)}
 .dw-find .q-icon{font-size:15px;color:var(--ink-3)}
 .dw-count{color:var(--ink-3);font-size:10px;white-space:nowrap}
-.dw-theme{border:0;background:transparent;font:inherit;color:var(--ink-3);
-  cursor:pointer;padding:0 3px;line-height:1}
+.dw-theme{border:0;background:transparent;font:inherit;font-size:15px;
+  color:var(--ink-2);cursor:pointer;padding:0 4px;line-height:1}
 .dw-theme:hover{color:var(--caret)}
 .dw-top{display:flex;align-items:center;gap:7px;padding:7px 10px;
   border-bottom:1px solid var(--rule);font-size:11px;color:var(--ink-3)}
