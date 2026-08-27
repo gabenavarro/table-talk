@@ -124,7 +124,7 @@ Insert after `CONFIG_PATH`. The theme token lists must match the `:root` block i
 import re
 import sys
 
-_HEX = re.compile(r"^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$")
+_HEX = re.compile(r"^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})\Z")
 
 # Every token the stylesheet's :root block defines. Names copied from bin/tt.css.
 _DARK = {"bg": "#1d2021", "surface": "#282828", "surface-2": "#32302f",
