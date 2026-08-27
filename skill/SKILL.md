@@ -77,16 +77,20 @@ words: ask ≤ 25, detail after the dash ≤ 50 (and ≤ 2 sentences), `--why` �
 Project defaults to basename of cwd; override with `--project`. `--help` has the rest.
 Record BEFORE writing the reply, so the dashboard and the reply never disagree.
 
-## Diagrams
+## Sketches and diagrams
 
-When a flow, architecture, or dependency graph would land faster as a picture,
-record one — mermaid source, e.g.
-`table-talk diagram $'flowchart LR\n  logs --> fold --> wall' --title "data flow"`.
-You cannot render mermaid in the terminal; the dashboard renders it live, so
-point the user there in the reply body: *"diagram 'data flow' is on the
-dashboard (http://127.0.0.1:8731)"*. Re-recording the same title replaces the
-diagram, so iterate freely. Keep it simple and concise — the handful of nodes
-that explain the concept, not a mural.
+An action or task takes an optional ASCII sketch:
+`table-talk action "..." --why ... --rec ... --diagram $'┌ logs ┐\n│ fold │\n└ wall ┘'`
+— drawn centered under the item on the dashboard in the theme's colours, and
+`table-talk progress <id> "..." --diagram "..."` adds or replaces one on an
+existing item. Keep a sketch at most 40 columns wide and ~12 lines: it must
+fit the narrowest card. Box-drawing and arrows read best (┌─┐ │ → ▲). ASCII
+renders in the terminal too, so the same sketch can appear in the reply body.
+
+For a picture too big for a card, record a standalone mermaid diagram —
+`table-talk diagram "<mermaid source>" --title "<short name>"` — and point
+the user at the dashboard (http://127.0.0.1:8731), which renders it live;
+the terminal cannot. Re-recording the same title replaces that diagram.
 
 ## End every reply with these tables (omit one only when truly empty)
 

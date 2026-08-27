@@ -46,6 +46,7 @@ install.sh symlinks the CLI into ~/.local/bin — make sure that's on your PATH.
     table-talk progress "$tid" "epoch 3/10"
     table-talk done "$id"
     table-talk term "FVA" --intuitive "range of possible flux" --technical "LP min/max per reaction at fixed optimum"
+    table-talk task "GPN training" --diagram $'data → train → eval'   # ASCII sketch under the item
     table-talk diagram $'flowchart LR\n  a --> b' --title "data flow"   # dashboard renders it
     table-talk show            # plain-text dump
     table-talk serve           # dashboard (run it yourself — it refuses inside a Claude session)
@@ -59,8 +60,9 @@ two seconds.
   each has to say. A titlebar reads `project:index` and carries tmux's flags —
   `!` open actions, `#` jobs running, `M` marked, `Z` zoomed, `*` current — over
   sections for actions, jobs, diagrams, glossary and done, and a footer tallying what is
-  resolved. Progress text is read for a percentage and drawn as a bar; a
-  coloured gutter marks whatever moved since you last looked. Click any id to
+  resolved. Progress text is read for a percentage and drawn as a bar; an
+  attached `--diagram` sketch draws centered under its item in the theme's inks;
+  a coloured gutter marks whatever moved since you last looked. Click any id to
   copy `table-talk done <id>`.
 - **The drawer** is a session tree grouped by project, every row carrying open
   counts and an htop-style meter (a project's numbers are the sum of its
