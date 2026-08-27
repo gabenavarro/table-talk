@@ -69,7 +69,7 @@ words: ask ≤ 25, detail after the dash ≤ 50 (and ≤ 2 sentences), `--why` �
 |---|---|
 | Decision only the user can make | `table-talk action "<the ask>" --why "<why it matters>" --rec "<your recommendation>"` → prints ID |
 | Background work starts | `table-talk task "<what>"` → prints ID |
-| Background work advances | `table-talk progress <id> "<update>"` |
+| Background work advances | `table-talk progress <id> "<update>" --pct <0-100>` |
 | Item needs a plain line or sketch later | `table-talk progress <id> --intuitive "<line>" --diagram "<ascii>"` (no note needed) |
 | Item answered/finished | `table-talk done <id>` |
 | Jargon first used | `table-talk term "<term>" --intuitive "<plain one-liner>" --technical "<precise definition>"` |
@@ -78,6 +78,21 @@ words: ask ≤ 25, detail after the dash ≤ 50 (and ≤ 2 sentences), `--why` �
 
 Project defaults to basename of cwd; override with `--project`. `--help` has the rest.
 Record BEFORE writing the reply, so the dashboard and the reply never disagree.
+
+## Progress that means something
+
+Pass `--pct` whenever you know the number. Without it the bar is scraped out of
+your prose, and a scrape reads any percentage it finds: a real job reported
+"92% of 5039 genes above zero" — a RESULT — and drew a 92%-complete bar on work
+that had barely started. `--pct` always wins over the text, so the sentence
+stays prose and the bar stays honest.
+
+The bar is only ever as fresh as your last `progress` call, and the card stamps
+it with the wall-clock time it was recorded so a frozen reading cannot pass for
+a live one. Nothing polls on your behalf: for work that runs longer than a
+reply, re-record on a cadence — a loop or a wrapper around the job that calls
+`table-talk progress <id> "..." --pct N` as it goes — or say plainly in the
+task text that the number is a checkpoint, not a live feed.
 
 ## Sketches and diagrams
 

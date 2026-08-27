@@ -234,6 +234,9 @@ body{background:var(--bg);color:var(--ink);margin:0}
 .blocks{color:var(--ok);letter-spacing:-.5px;display:flex}
 .blocks .e{color:var(--ink-3);opacity:.45}
 .pct{color:var(--ink-2)}
+/* when the reading was taken: a bar with no clock on it cannot be told apart
+   from a live one, and this one froze 95 minutes ago on a real job */
+.asof{color:var(--ink-3);font-size:10px}
 .raw{color:var(--ink-3);font-size:11px}
 /* A path in the text is a real button, never markup. The runs of one cell have
    to flow as a sentence, so the box and everything in it stays inline: .ttl is

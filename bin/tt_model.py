@@ -88,6 +88,24 @@ def percent(text):
     return None
 
 
+def progress_pct(ev):
+    """The number the bar draws: the explicit --pct if one was recorded, else
+    whatever percent() can scrape out of the prose.
+
+    Explicit wins because scraping is a guess, and a guess that reads a RESULT
+    as completion is worse than no bar at all: '92% of 5039 genes above zero'
+    drew a 92% bar on a job that was nowhere near finished.
+
+    A bool or a string is not a reading - a hand-edited log must not be able to
+    draw a bar - and True is deliberately rejected before the numeric check,
+    because in Python it IS an int.
+    """
+    p = ev.get("pct")
+    if isinstance(p, bool) or not isinstance(p, (int, float)):
+        return percent(ev.get("progress", ""))
+    return max(0, min(100, round(p)))
+
+
 _COUNTED = ("action", "task")
 
 
@@ -436,6 +454,22 @@ def selftest():
     assert percent("Blocked on capacity (see 9a70), not on code") is None
     assert percent("Seeds 8042000-8042328 planned") is None, "a numeric range is not a fraction"
     assert percent("") is None and percent(None) is None
+
+    # progress_pct: an explicit reading beats one scraped out of prose. This
+    # exact sentence is real gpn-micro progress; scraping drew a 92% bar from
+    # a RESULT on a job that had barely started.
+    _res = "median per-gene R2 0.210, r 0.453, 92% of 5039 genes above zero"
+    assert progress_pct({"progress": _res}) == 92, "the scrape still reads it"
+    assert progress_pct({"pct": 40, "progress": _res}) == 40, \
+        "and an explicit --pct overrules it, which is the whole point"
+    assert progress_pct({"pct": 0}) == 0, "0 is a reading, not a missing one"
+    assert progress_pct({"progress": "epoch 3/10"}) == 30, "no --pct still scrapes"
+    assert progress_pct({}) is None and progress_pct({"progress": ""}) is None
+    assert progress_pct({"pct": 140}) == 100 and progress_pct({"pct": -5}) == 0
+    assert progress_pct({"pct": 39.6}) == 40, "a float reading rounds"
+    for bad in (True, False, "40", None, [40], {"a": 1}):
+        assert progress_pct({"pct": bad, "progress": "epoch 1/4"}) == 25, \
+            f"pct={bad!r} is not a reading; a hand-edited log falls back to the scrape"
 
     # summarize: terms are reference material, never an obligation, so they are
     # counted in neither resolved nor recorded.

@@ -43,7 +43,7 @@ install.sh symlinks the CLI into ~/.local/bin — make sure that's on your PATH.
     # each recording command prints a 4-hex id; capture it to update or close the item
     id=$(table-talk action "Choose ref genome" --why "blocks training" --rec "R64-1-1")
     tid=$(table-talk task "Training GPN model")
-    table-talk progress "$tid" "epoch 3/10"
+    table-talk progress "$tid" "epoch 3/10" --pct 30   # --pct beats any number in the text
     table-talk progress "$id" --intuitive "what this means in plain words"   # amend, no note
     table-talk done "$id"
     table-talk term "FVA" --intuitive "range of possible flux" --technical "LP min/max per reaction at fixed optimum"
