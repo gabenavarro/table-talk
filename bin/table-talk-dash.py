@@ -580,7 +580,9 @@ def bar_for(open_n, done_n):
     open_n, done_n = max(0, open_n), max(0, done_n)
     if open_n + done_n > MAX_CELLS:               # scale, never overflow
         total = open_n + done_n
-        open_n = round(MAX_CELLS * open_n / total)
+        # never round an open item AWAY: a shut section reporting "nothing
+        # wants you" while something does is the one lie this bar must not tell
+        open_n = max(1, round(MAX_CELLS * open_n / total)) if open_n else 0
         done_n = MAX_CELLS - open_n
     return "█" * open_n, "░" * done_n
 
@@ -589,7 +591,7 @@ def _prompt(cls, title, count, toggles=None, opened=None, key="", force=False, b
     """A section header as a shell prompt line: '❯ actions --open (3)'.
 
     When `toggles` is given, clicking the line shows or hides that container —
-    this is what keeps the collapsed glossary and done sections. `opened` is a
+    this is what makes every section collapsible. `opened` is a
     dict owned by the caller and outliving this render, so a section the user
     expanded is still expanded after the next poll rebuilds the body. `force`
     opens the section for this render only, without touching what the user chose.
@@ -700,9 +702,10 @@ def render_window_body(container, state, newest_action_id, query="", changed=(),
                     bar=bar_for(0, len(dias)))
             dia_box.move(container, -1)
 
-        # Glossary and done are collapsed until the user opens them or a query
-        # finds something inside. Each box is built before the prompt that
-        # toggles it, then moved back under it with move(container, -1).
+        # Every section collapses; ui.collapsed_sections decides which start
+        # shut, and a live query force-opens one holding a match (#57). Each
+        # box is built before the prompt that toggles it, then moved back
+        # under it with move(container, -1).
         terms = term_rows(state)
         gls_box = ui.element("div")
         with gls_box:
@@ -883,6 +886,9 @@ def selftest():
     f, e = bar_for(30, 30)
     assert len(f) + len(e) == MAX_CELLS, "a long section is scaled, never overflowed"
     assert bar_for(-1, 0) == ("", ""), "a negative count draws nothing"
+    assert bar_for(1, 100) == ("█", "░" * (MAX_CELLS - 1)), \
+        "one open item among a hundred resolved still shows: rounding it away " \
+        "makes the bar say nothing needs you while something does"
     assert "data-id" in COPY_JS and "clipboard" in COPY_JS
     assert "[0-9a-f]{4,}" in COPY_JS, \
         "what COPY_JS builds is a SHELL COMMAND the user pastes, so the id it " \
@@ -1130,6 +1136,9 @@ def selftest():
         "_prompt's flip must toggle against the LIVE visibility - `force` and " \
         "`shown` are constants captured for the render, so a filter-forced " \
         "section evaluated `not True` on every click and went dead after one"
+    assert code.count("bar_el.set_visibility") == 2, \
+        "the bar tracks the section: set at render AND flipped on click, or a " \
+        "section you open keeps a bar that contradicts the rows below it"
     assert '"securityLevel": "strict"' in code, \
         "mermaid source comes out of a LOG FILE; strict is what keeps its " \
         "labels sanitized - loose would execute whatever the log carries"
