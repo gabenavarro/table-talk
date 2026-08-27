@@ -464,6 +464,10 @@ def _action_row(ev, blink, query, changed):
                     cur.props["title"] = "newest action waiting on you"
             # no guide glyph: .sub draws the whole tree guide as one rule, because
             # a per-row ├/└ came apart the moment `why` wrapped past one line
+            if ev.get("intuitive"):
+                with ui.element("div").classes("sub"):
+                    ui.label("int").classes("lb")
+                    _cell(ev["intuitive"], query)
             for field in ("why", "rec"):
                 with ui.element("div").classes("sub"):
                     ui.label(field).classes("lb")
@@ -492,6 +496,10 @@ def _task_row(ev, query, changed):
                     ui.label(f"{pct}%").classes("pct")
                 if text:
                     _cell(text, query, "raw")
+            if ev.get("intuitive"):
+                with ui.element("div").classes("sub"):
+                    ui.label("int").classes("lb")
+                    _cell(ev["intuitive"], query)
             _art_sub(ev)
 
 
@@ -1077,6 +1085,12 @@ def selftest():
     assert code.index('for field in ("why", "rec")') < code.index("_art_sub(ev)"), \
         "the sketch is the LAST guided sub-row: .sub:last-child draws the " \
         "tree corner, and a bare div after the subs would strand it mid-air"
+    assert code.count('ui.label("int").classes("lb")') == 2, \
+        "both actions and jobs hang the plain-English line off the guide, " \
+        "labeled the way the --intuitive flag is spelled"
+    assert code.index('ui.label("int")') < code.index('for field in ("why", "rec")'), \
+        "int reads FIRST: it is the line for someone with no context, and " \
+        "why/rec argue a decision that line has to set up"
     assert ".p-mag" in css and ".id-mag" in css and ".mmd" in css, \
         "the diagrams section needs its prompt, title-cell and body styles"
     assert ".win-b .row:has(.id-mag)" in css, \
