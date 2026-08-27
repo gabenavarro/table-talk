@@ -291,6 +291,21 @@ body{background:var(--bg);color:var(--ink);margin:0}
 .mmd{background:#fff;border-radius:3px;padding:6px 8px}
 .mmd svg{display:block}
 
+/* the item's ASCII sketch: one guided sub-row like why/rec, centered in the
+   card per the spec. white-space:pre keeps the art's own geometry - the row's
+   inherited overflow-wrap:anywhere must not fold a box border - and the mono
+   face is restated because .sub switched to prose. justify-self centers the
+   shrink-to-fit box in the 1fr track; min-width:0 + max-width + overflow-x
+   mean art wider than the card scrolls inside its own box rather than
+   widening the card. Only the theme's own inks: structure strokes recede to
+   --ink-3 so the labels read first, and a config palette override recolours
+   the art with everything else. */
+.art{justify-self:center;min-width:0;max-width:100%;overflow-x:auto;
+  font-family:var(--mono);font-size:11px;line-height:1.3;white-space:pre;
+  color:var(--ink)}
+.art>*{display:inline}
+.art .st{color:var(--ink-3)}
+
 /* ---- statusline ---- */
 .sl{display:flex;align-items:center;background:var(--surface-2);border-top:1px solid var(--rule);
   font-size:11.5px;color:var(--ink-2);height:28px;padding:0 3px;flex:0 0 28px}

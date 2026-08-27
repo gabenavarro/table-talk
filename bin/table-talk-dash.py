@@ -468,6 +468,7 @@ def _action_row(ev, blink, query, changed):
                 with ui.element("div").classes("sub"):
                     ui.label(field).classes("lb")
                     _cell(ev.get(field, ""), query)
+            _art_sub(ev)
 
 
 def _task_row(ev, query, changed):
@@ -491,6 +492,7 @@ def _task_row(ev, query, changed):
                     ui.label(f"{pct}%").classes("pct")
                 if text:
                     _cell(text, query, "raw")
+            _art_sub(ev)
 
 
 def _term_row(ev, query):
@@ -502,6 +504,25 @@ def _term_row(ev, query):
             with ui.element("div").classes("sub"):
                 ui.label("def").classes("lb")
                 _cell(ev.get("technical", ""), query)
+
+
+def _art_sub(ev):
+    """The item's ASCII sketch, hung off the same tree guide as why/rec and
+    emitted LAST so .sub:last-child's corner lands on it. Rendered as
+    ui.label runs split by tt_model.art_spans - structure strokes in the
+    faint ink, labels in the full ink - never as markup: the art comes out
+    of a LOG FILE, and a label's text binding cannot become HTML."""
+    art = ev.get("diagram")
+    if not art:
+        return
+    from nicegui import ui
+    with ui.element("div").classes("sub"):
+        ui.label("art").classes("lb")
+        with ui.element("div").classes("art"):
+            for chunk, structure in M.art_spans(art):
+                lbl = ui.label(chunk)
+                if structure:
+                    lbl.classes("st")
 
 
 def _diagram_row(ev, query):
@@ -1050,11 +1071,30 @@ def selftest():
     assert '("action", "task", "term", "diagram")' in code, \
         "the statusline tally must count diagram rows: the filter highlights " \
         "them, and '0/N rows match' beside a visibly matching row is a lie"
+    assert "M.art_spans" in code, \
+        "art is split by the property-tested model classifier and rendered as " \
+        "label runs - never raw, never markup: it comes out of a LOG FILE"
+    assert code.index('for field in ("why", "rec")') < code.index("_art_sub(ev)"), \
+        "the sketch is the LAST guided sub-row: .sub:last-child draws the " \
+        "tree corner, and a bare div after the subs would strand it mid-air"
     assert ".p-mag" in css and ".id-mag" in css and ".mmd" in css, \
         "the diagrams section needs its prompt, title-cell and body styles"
     assert ".win-b .row:has(.id-mag)" in css, \
         "a diagram title shares the row grid with 4-hex ids: without its own " \
         "wider column it overflows the 42px id track (same bug .id-gls had)"
+    art = css.split(".art{")[1].split("}")[0]
+    assert "white-space:pre" in art and "justify-self:center" in art, \
+        "a sketch keeps its own geometry (the row's overflow-wrap:anywhere " \
+        "must not fold a box border) and sits CENTERED in the card - the spec"
+    assert "max-width:100%" in art and "overflow-x:auto" in art and "min-width:0" in art, \
+        "art wider than the narrowest card scrolls inside its own box - it " \
+        "must never widen the card"
+    assert "var(--mono)" in art, \
+        ".sub switched to the prose face; art must restate mono or misalign"
+    assert ".art>*{display:inline}" in css, \
+        "every glyph the renderer emits is a div - the .blocks trap again"
+    assert ".art .st" in css, \
+        "structure strokes recede to the faint ink so the labels read first"
     print("ok")
 
 
