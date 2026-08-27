@@ -97,11 +97,21 @@ def find_file_with_id(id_):
     return None
 
 
+def session_code(env=None):
+    """Four chars of the agent's own session id, or ''. One log file is one
+    date+project and can hold several sessions, so identity belongs on the
+    EVENT, not the filename."""
+    return ((env if env is not None else os.environ).get("CLAUDE_CODE_SESSION_ID") or "")[:4]
+
+
 def add_event(project, fields):
     f = session_file(project)
     with mint_lock():
         i = new_id()
-        append(f, {"id": i, "ts": int(time.time()), **fields})
+        ev = {"id": i, "ts": int(time.time()), **fields}
+        if (s := session_code()):
+            ev.setdefault("sid", s)
+        append(f, ev)
     return i
 
 
@@ -112,8 +122,11 @@ def add_term(path, term, intuitive, technical):
         existing = next((i for i, e in state.items() if e.get("type") == "term"
                          and e.get("term", "").lower() == term.lower()), None)
         i = existing or new_id()
-        append(path, {"id": i, "type": "term", "term": term, "intuitive": intuitive,
-                      "technical": technical, "ts": int(time.time())})
+        ev = {"id": i, "type": "term", "term": term, "intuitive": intuitive,
+              "technical": technical, "ts": int(time.time())}
+        if (s := session_code()):
+            ev.setdefault("sid", s)
+        append(path, ev)
     return i
 
 
@@ -125,8 +138,11 @@ def add_diagram(path, title, mermaid):
         existing = next((i for i, e in state.items() if e.get("type") == "diagram"
                          and e.get("title", "").lower() == title.lower()), None)
         i = existing or new_id()
-        append(path, {"id": i, "type": "diagram", "title": title,
-                      "mermaid": mermaid, "ts": int(time.time())})
+        ev = {"id": i, "type": "diagram", "title": title,
+              "mermaid": mermaid, "ts": int(time.time())}
+        if (s := session_code()):
+            ev.setdefault("sid", s)
+        append(path, ev)
     return i
 
 
@@ -226,6 +242,15 @@ def selftest():
         update(i3, {"progress": "50%"})
         assert fold(f)[i3]["progress"] == "50%" and fold(f)[i3]["what"] == "x"
         assert len(i3) == 4
+        assert session_code({}) == "", "no session id, no stamp"
+        assert session_code({"CLAUDE_CODE_SESSION_ID": "9f3c8a1e-dead"}) == "9f3c", \
+            "four chars is enough to tell sessions apart and fits the id column"
+        os.environ["CLAUDE_CODE_SESSION_ID"] = "abcd1234-x"
+        try:
+            i5 = add_event("proj", {"type": "task", "status": "open", "what": "s"})
+            assert fold(session_file("proj"))[i5]["sid"] == "abcd"
+        finally:
+            del os.environ["CLAUDE_CODE_SESSION_ID"]
         # new_id must avoid ids used in ANY file, not just one
         other = session_file("other")
         append(other, {"id": "d00d", "type": "task", "what": "y", "ts": 1})
