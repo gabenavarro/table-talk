@@ -86,6 +86,15 @@ Every key has a click equivalent — the statusline chips, the `M` `Z` `▾`
 buttons on each titlebar, and the filter box itself — so nothing on this page
 is keyboard-only.
 
+## Configuration
+
+`~/.config/table-talk/config.toml` (or point `TABLE_TALK_CONFIG` at another
+file) sets the port, poll interval, columns, drawer state, theme, and
+`links.open_command` — the command used to open a clicked file path in your
+editor. Every key, its default, and what it does is in
+[`docs/config.example.toml`](docs/config.example.toml); copy it to get
+started. A missing or broken file just falls back to the defaults.
+
 ## Test
 
     ./test.sh
