@@ -61,7 +61,8 @@ two seconds.
   each has to say. A titlebar reads `project:index` and carries tmux's flags —
   `!` open actions, `#` jobs running, `M` marked, `Z` zoomed, `*` current — over
   sections for actions, jobs, diagrams, glossary and done, and a footer tallying what is
-  resolved. Progress text is read for a percentage and drawn as a bar; an
+  resolved. Every section collapses, and a shut one keeps a █/░ bar reporting
+  what it holds. Progress text is read for a percentage and drawn as a bar; an
   attached `--diagram` sketch draws centered under its item in the theme's inks;
   a coloured gutter marks whatever moved since you last looked. Click any id to
   copy `table-talk done <id>`.

@@ -181,6 +181,10 @@ body{background:var(--bg);color:var(--ink);margin:0}
   align-items:baseline;cursor:pointer}
 .pr .n{color:var(--ink-3);font-weight:400}
 .p-act{color:var(--act)} .p-job{color:var(--job)} .p-gls{color:var(--gls)} .p-ok{color:var(--ok)}
+/* a shut section still reports itself; open, the rows say it and this hides */
+.bar-box{display:flex;margin-left:2px}
+.pr .bar{letter-spacing:-.5px}
+.pr .bar.e{color:var(--ink-3);opacity:.55}
 /* every .row selector is scoped to the window body on purpose: 'row' is also a
    Quasar utility class, and QField's own markup carries it - an unscoped
    .row{display:grid} rule collapses the filter input to a ~40 px stub */
