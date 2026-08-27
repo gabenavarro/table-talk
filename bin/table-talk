@@ -149,7 +149,29 @@ def cmd_show(project):
             print(json.dumps(e))
 
 
-def cmd_serve(port):
+def serve_refusal(env, force):
+    """Why serve must not start here, or None.
+
+    serve never returns - it BECOMES the dashboard - so a Claude session that
+    runs it wedges until its tool timeout. And the obvious liveness check lies:
+    pgrep -f "table-talk serve" matches nothing once execv renames the process,
+    so a session that checked first still concludes 'not running'. CLAUDECODE
+    exactly, never CLAUDE_CODE_*: the user's own VS Code terminal carries
+    CLAUDE_CODE_SSE_PORT, and a broad match would lock the human out too.
+    """
+    if env.get("CLAUDECODE") and not force:
+        return ("error: table-talk serve never exits, and this is a Claude Code "
+                "session - it would hang until the tool timeout.\n"
+                "check instead:  curl -sf -o /dev/null --max-time 2 "
+                "http://127.0.0.1:8731/ && echo up || echo down\n"
+                "If it is down, ask the user to run `table-talk serve` in their "
+                "own terminal (or pass --force to insist).")
+    return None
+
+
+def cmd_serve(port, force=False):
+    if (msg := serve_refusal(os.environ, force)):
+        sys.exit(msg)
     dash = Path(__file__).resolve().parent / "table-talk-dash.py"
     uv = shutil.which("uv")
     if not uv:
@@ -221,6 +243,16 @@ def selftest():
             raise AssertionError("done on a diagram must be rejected")
         except SystemExit:
             pass
+    # serve_refusal: pure, so both directions are testable without exec'ing uv
+    assert serve_refusal({}, False) is None, "a human terminal is never refused"
+    assert serve_refusal({"CLAUDE_CODE_SSE_PORT": "1"}, False) is None, \
+        "the user's own VS Code terminal carries CLAUDE_CODE_* vars; only " \
+        "CLAUDECODE itself marks a Claude session"
+    msg = serve_refusal({"CLAUDECODE": "1"}, False)
+    assert msg and "curl" in msg and "--force" in msg, \
+        "the refusal must hand back the liveness check that actually works " \
+        "(pgrep -f 'table-talk serve' never matches: execv renames the process)"
+    assert serve_refusal({"CLAUDECODE": "1"}, True) is None, "--force overrides"
     print("ok")
 
 
@@ -262,6 +294,8 @@ def main():
 
     sv = sub.add_parser("serve", help="launch the dashboard")
     sv.add_argument("--port", type=int, help="default: server.port from the config (8731)")
+    sv.add_argument("--force", action="store_true",
+                    help="start even inside a Claude Code session")
 
     args = p.parse_args()
     if args.selftest:
@@ -282,7 +316,7 @@ def main():
     elif args.cmd == "show":
         cmd_show(args.project)
     elif args.cmd == "serve":
-        cmd_serve(args.port)
+        cmd_serve(args.port, args.force)
     else:
         p.print_help()
 
