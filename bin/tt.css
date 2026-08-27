@@ -190,6 +190,12 @@ body{background:var(--bg);color:var(--ink);margin:0}
 .lk{border:0;background:transparent;font:inherit;padding:0;cursor:pointer;
   color:var(--job);text-decoration:underline dotted;text-underline-offset:2px}
 .lk:hover{color:var(--caret)}
+/* the drawer footer: a sibling of .dw-tree so a poll rebuilding the tree never
+   touches it. Each row reuses .lk but needs its own block layout - the inline
+   rule above is scoped to .win-b .row and does not reach here. */
+.dw-ctx{flex:0 0 auto;border-top:1px solid var(--rule);padding:3px 0}
+.dw-ctx-i{display:block;width:100%;text-align:left;padding:3px 10px;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 /* '>*', never 'span': every glyph the renderer emits is a div, so a span
    selector matches nothing and the sweep silently never animates */
 .scan{display:flex;gap:1px}

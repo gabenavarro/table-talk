@@ -318,7 +318,7 @@ def link_roots(cfg):
             *(Path(r).expanduser() for r in cfg["links"]["extra_roots"] if isinstance(r, str))]
 
 
-def open_path(path, cfg, run=subprocess.run):
+def open_path(path, cfg, run=subprocess.run, extra_roots=()):
     """Open one path in the configured command, re-deriving confinement HERE.
 
     The string arrives from a click on markup built out of a log file, so it is
@@ -327,17 +327,47 @@ def open_path(path, cfg, run=subprocess.run):
     Nothing about the click is trusted, so a payload that was tampered with is
     no different from a log line that never should have linked.
 
+    extra_roots widens the check for ONE call without touching link_roots (and
+    so without widening every other link on the wall): the drawer footer hands
+    back the exact path it resolved for itself, never one out of a log line, so
+    re-deriving confinement against that single path grants exactly that file
+    and nothing beside it.
+
     The command is an argv LIST and never shell=True: that is the whole reason a
     file called 'a;b.md' stays a filename. A click that fails the check does
     nothing at all, and a command that is not installed is not a crash.
     """
-    spans = M.path_spans(path, link_roots(cfg))
+    spans = M.path_spans(path, [*link_roots(cfg), *extra_roots])
     if len(spans) != 1 or spans[0][2] != path:
         return
     try:
         run([cfg["links"]["open_command"], path], check=False)
     except OSError:
         pass
+
+
+def nearest_claude_md(start, home):
+    """The closest CLAUDE.md found walking up from `start`, or None.
+
+    Never inspects anything above `home`: a dashboard started outside the
+    user's own tree must not surface someone else's CLAUDE.md living further
+    up the disk. Both paths are resolved before comparison, so a symlinked
+    `start` that resolves outside home's tree is refused outright rather than
+    walked - the same "resolve, then confine" rule path_spans uses.
+    """
+    cur = Path(start).resolve()
+    home = Path(home).resolve()
+    try:
+        cur.relative_to(home)
+    except ValueError:
+        return None
+    while True:
+        hit = cur / "CLAUDE.md"
+        if hit.is_file():
+            return hit
+        if cur == home:
+            return None
+        cur = cur.parent
 
 
 def _cell(text, query, cls=None):
@@ -775,6 +805,32 @@ def selftest():
     assert ".lk-p" in css and ".lk{" in css, \
         "a link run needs its styles, and the inline rule is what keeps a cell one sentence"
 
+    # nearest_claude_md: the drawer-footer discovery helper
+    with tempfile.TemporaryDirectory() as td:
+        above = Path(td)
+        home = above / "home"
+        proj = home / "a" / "proj"
+        sub = proj / "sub"
+        sub.mkdir(parents=True)
+        (above / "CLAUDE.md").write_text("above home")
+        assert nearest_claude_md(sub, home) is None, \
+            "nothing under home has one yet; the one ABOVE home must not be found"
+        (home / "CLAUDE.md").write_text("home")
+        assert nearest_claude_md(sub, home) == home / "CLAUDE.md", \
+            "walks all the way up to home when nothing closer exists"
+        (proj / "CLAUDE.md").write_text("proj")
+        assert nearest_claude_md(sub, home) == proj / "CLAUDE.md", \
+            "the nearest one wins once something closer than home exists"
+        assert nearest_claude_md(proj, home) == proj / "CLAUDE.md", \
+            "the starting directory itself containing one is found immediately"
+        outside = above / "outside"
+        outside.mkdir()
+        (outside / "CLAUDE.md").write_text("outside")
+        link = proj / "link"
+        link.symlink_to(outside)
+        assert nearest_claude_md(link, home) is None, \
+            "a symlink whose target resolves outside home's tree is not followed"
+
     # Everything below reads this file as text: these are properties of the
     # SOURCE, and every one of them is a bug that shipped once already.
     #
@@ -944,6 +1000,36 @@ def main(port=None):
                     with theme_btn:
                         theme_lbl = ui.label(THEME_ICONS[mode])
                 drawer = ui.element("div").classes("dw-tree")   # Task 10 renders here
+                # Context files at known locations, not ones found in log text -
+                # built once, like .dw-find above, never rebuilt by a poll. Absent
+                # entirely when nothing exists: an always-there-but-empty footer
+                # is worse than no footer.
+                ctx = []
+                nearest = nearest_claude_md(Path.cwd(), Path.home())
+                if nearest:
+                    ctx.append(("CLAUDE.md", nearest))
+                home_claude = Path.home() / ".claude" / "CLAUDE.md"
+                if home_claude.is_file():
+                    ctx.append(("~/.claude/CLAUDE.md", home_claude))
+                # The session-memory directory is a DIRECTORY; path_spans only
+                # ever returns files. Rather than teach it (or open_path)
+                # directories, link the representative MEMORY.md inside it - the
+                # memory tool that populates the directory always writes one
+                # alongside the rest, so this is the file a user actually wants.
+                mem_file = (Path.home() / ".claude" / "projects" /
+                            str(Path.cwd()).replace("/", "-") / "memory" / "MEMORY.md")
+                if mem_file.is_file():
+                    ctx.append(("memory", mem_file))
+                if ctx:
+                    with ui.element("div").classes("dw-ctx"):
+                        for label, p in ctx:
+                            p = str(p.resolve())
+                            btn = ui.element("button").classes("lk dw-ctx-i")
+                            btn.props["data-path"] = p
+                            btn.props["title"] = f"open {p}"
+                            with btn:
+                                ui.label(label)
+                            btn.on("click", lambda _, pp=p: open_path(pp, cfg, extra_roots=(pp,)))
             wall = ui.element("div").classes("wall")
         # The statusline: a sibling BELOW .tt-main, not inside it, so the drawer
         # and the wall both stop 28 px short of the floor and it spans the lot.
