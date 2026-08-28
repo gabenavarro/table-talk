@@ -137,6 +137,14 @@ memory:
 **🔵 Background work**
 | ID | What | Progress |
 
+A task is closed by YOU, and nothing else will ever close it. An action ends
+when the user answers it by id; a job ends when its work lands, and no one is
+watching for that but you. So `done` it in the same breath as reporting the
+work finished, and sweep before writing these tables: every task whose work has
+landed gets `done` now, not next reply. Two jobs sat "in progress" on the wall
+for three hours after their PR merged because nobody ran the command. A sample
+or demo item is a task like any other — close it once it has served its purpose.
+
 **📖 Terms in this reply**
 | Term | Intuitive | Technical |
 
