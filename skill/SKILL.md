@@ -168,6 +168,9 @@ technical = the precise definition, jargon spelled out.
   it to you and the CLI prints `moved <id> from session <a> to <b>`. Say so in
   your reply — the user does not see that line, and an item changing hands
   silently is the thing this protocol exists to prevent.
+- A pasted `SESSION: 7e2b - ID: 4c1a` names both the item and the session that
+  owns it. Act on the id; the session tells you whether it is yours, and
+  touching it when it is not hands it over (see above).
 - At session start, if the dashboard is down (check below), mention `table-talk serve` once — never run it yourself.
 
 ## The server — never run it, and end the turn
