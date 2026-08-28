@@ -49,9 +49,26 @@ def valid_colour(s):
     return isinstance(s, str) and bool(_HEX.match(s))
 
 
+# A value can be the RIGHT TYPE and still break the dashboard: poll_seconds=0
+# turns the 2s timer into an unthrottled loop re-globbing the data dir every
+# tick, port outside 1-65535 either dies at bind with a raw uvicorn traceback
+# (>65535, <0) or silently starts on a random ephemeral port that breaks the
+# documented URL (0), and columns outside 0-3 has no packing defined for it
+# (0 itself is valid: it means "auto", see cols_for). Checked in _merge next
+# to the colour check, not clamped to the boundary - a fallback to the same
+# default the type check already uses needs no new machinery.
+_RANGES = {
+    "server.poll_seconds": (0.2, float("inf")),
+    "server.port": (1, 65535),
+    "ui.columns": (0, 3),
+    "ui.filter_debounce_ms": (0, float("inf")),
+}
+
+
 def _merge(default, override, path=""):
-    """Deep-merge override onto a COPY of default. A value of the wrong type, or
-    an unknown key, is dropped with a warning rather than propagated."""
+    """Deep-merge override onto a COPY of default. A value of the wrong type or
+    out of range, or an unknown key, is dropped with a warning rather than
+    propagated."""
     out = {}
     for key, dv in default.items():
         ov = override.get(key) if isinstance(override, dict) else None
@@ -67,6 +84,11 @@ def _merge(default, override, path=""):
         elif (isinstance(ov, bool) and not isinstance(dv, bool)) or (
                 not isinstance(ov, type(dv)) and not (isinstance(dv, float) and isinstance(ov, int))):
             print(f"warning: config {where}: expected {type(dv).__name__}, using default",
+                  file=sys.stderr)
+            out[key] = dv
+        elif where in _RANGES and not (_RANGES[where][0] <= ov <= _RANGES[where][1]):
+            lo, hi = _RANGES[where]
+            print(f"warning: config {where}: {ov!r} is out of range ({lo}-{hi}), using default",
                   file=sys.stderr)
             out[key] = dv
         else:
@@ -158,6 +180,55 @@ def selftest():
         mode.write_text('[theme]\ndefault = "dark"\n')
         assert load(mode)["theme"]["default"] == "dark", \
             "theme.default is a mode name and must survive the colour validator"
+
+        zero_poll = Path(td) / "zero_poll.toml"
+        zero_poll.write_text('[server]\npoll_seconds = 0\n')
+        assert load(zero_poll)["server"]["poll_seconds"] == DEFAULTS["server"]["poll_seconds"], \
+            "a poll_seconds of 0 pegs a core: the timer stops throttling and " \
+            "re-globs the whole data dir every event-loop tick"
+
+        neg_poll = Path(td) / "neg_poll.toml"
+        neg_poll.write_text('[server]\npoll_seconds = -5\n')
+        assert load(neg_poll)["server"]["poll_seconds"] == DEFAULTS["server"]["poll_seconds"], \
+            "a negative poll_seconds pegs a core the same as zero does"
+
+        big_port = Path(td) / "big_port.toml"
+        big_port.write_text('[server]\nport = 99999\n')
+        assert load(big_port)["server"]["port"] == DEFAULTS["server"]["port"], \
+            "a port above 65535 dies at bind() with a raw uvicorn OverflowError " \
+            "instead of starting the dashboard"
+
+        neg_port = Path(td) / "neg_port.toml"
+        neg_port.write_text('[server]\nport = -1\n')
+        assert load(neg_port)["server"]["port"] == DEFAULTS["server"]["port"], \
+            "a negative port dies at bind() the same as one above 65535"
+
+        zero_port = Path(td) / "zero_port.toml"
+        zero_port.write_text('[server]\nport = 0\n')
+        assert load(zero_port)["server"]["port"] == DEFAULTS["server"]["port"], \
+            "port 0 starts on a random ephemeral port: the documented URL and " \
+            "the liveness check serve_refusal hands every session both go stale"
+
+        edge_port = Path(td) / "edge_port.toml"
+        edge_port.write_text('[server]\nport = 65535\n')
+        assert load(edge_port)["server"]["port"] == 65535, \
+            "65535 is the highest legal port and must not be rejected as out of range"
+
+        big_cols = Path(td) / "big_cols.toml"
+        big_cols.write_text('[ui]\ncolumns = 99\n')
+        assert load(big_cols)["ui"]["columns"] == DEFAULTS["ui"]["columns"], \
+            "cols_for() has no packing defined past 3 columns"
+
+        zero_cols = Path(td) / "zero_cols.toml"
+        zero_cols.write_text('[ui]\ncolumns = 0\n')
+        assert load(zero_cols)["ui"]["columns"] == 0, \
+            "0 means auto-pack (see cols_for) and must not be rejected as out of range"
+
+        neg_debounce = Path(td) / "neg_debounce.toml"
+        neg_debounce.write_text('[ui]\nfilter_debounce_ms = -5\n')
+        assert load(neg_debounce)["ui"]["filter_debounce_ms"] == DEFAULTS["ui"]["filter_debounce_ms"], \
+            "a negative debounce is meaningless as a JS setTimeout delay and " \
+            "must not reach the search box's debounce prop"
     print("ok")
 
 
