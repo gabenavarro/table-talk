@@ -192,14 +192,31 @@ def merge_projects(sessions):
 
 def sort_groups(groups, mode):
     """Order the drawer. Every key falls back to recency so the order is total
-    and stable; children always read newest-first regardless of group order."""
+    and stable.
+
+    Children read newest-first in every mode but `actions`, where they answer
+    the same question the mode asks - what needs me most - because a quiet
+    newer session otherwise sits above the one holding four open actions purely
+    for being newer. The index is NOT touched: it is the file's identity (`:0`
+    is the newest file), so a session keeps its name wherever it is drawn.
+
+    Returns new group dicts rather than reordering the caller's lists: the
+    tally is summed from the same groups, and a sort that mutated them would
+    be a second, invisible caller.
+    """
     if mode == "project":
         key = lambda g: (g["project"].lower(), -g["latest"])          # noqa: E731
     elif mode == "actions":
         key = lambda g: (-g["open_actions"], -g["latest"])            # noqa: E731
     else:
         key = lambda g: (-g["latest"], g["project"].lower())          # noqa: E731
-    return sorted(groups, key=key)
+    out = sorted(groups, key=key)
+    if mode == "actions":
+        out = [{**g, "sessions": sorted(
+            g["sessions"],
+            key=lambda s: (-s["summary"]["open_actions"], -s["summary"]["latest"]))}
+            for g in out]
+    return out
 
 
 def weight(state):
@@ -523,8 +540,35 @@ def selftest():
     by_project = sort_groups(groups, "project")
     assert [g["project"] for g in by_project] == ["gcp-aws-xfer", "phephree", "table-talk"]
     assert [s["date"] for s in by_project[1]["sessions"]] == ["2026-08-26", "2026-08-25"], \
-        "children always read newest-first whatever the group order"
+        "project mode reorders the groups and leaves the children newest-first"
     assert sort_groups(groups, "nonsense") == by_recent, "an unknown sort falls back to recent"
+
+    # In actions mode the sort reaches INSIDE a project: a quiet newer session
+    # must not outrank the older one holding every open action (phephree:1 had
+    # four and sat under an empty phephree:0).
+    hot = [("2026-08-27-x", _sess(0, 999)), ("2026-08-26-x", _sess(4, 100))]
+    by_act = sort_groups(group_sessions(hot), "actions")[0]
+    assert [s["date"] for s in by_act["sessions"]] == ["2026-08-26", "2026-08-27"], \
+        "actions mode ranks the sessions inside a project by what needs you"
+    assert [s["index"] for s in by_act["sessions"]] == [1, 0], \
+        "the index is the FILE's identity - :0 is the newest - and never renumbers"
+    for quiet in ("recent", "project", "nonsense"):
+        assert [s["date"] for s in sort_groups(group_sessions(hot), quiet)[0]["sessions"]] \
+            == ["2026-08-27", "2026-08-26"], f"{quiet} still reads newest-first"
+    # Equal open actions must fall back to RECENCY, not to the date string:
+    # group_sessions already emits recency order, so date and recency have to
+    # disagree here or a date tie-break is invisible.
+    tie = [("2026-08-27-y", _sess(2, 100)), ("2026-08-26-y", _sess(2, 900)),
+           ("2026-08-25-y", _sess(2, 500))]
+    assert [s["date"] for s in sort_groups(group_sessions(tie), "actions")[0]["sessions"]] \
+        == ["2026-08-26", "2026-08-25", "2026-08-27"], \
+        "equal open actions fall back to recency, so the order is total and " \
+        "cannot flap between polls"
+
+    fresh = group_sessions(hot)
+    sort_groups(fresh, "actions")
+    assert [s["date"] for s in fresh[0]["sessions"]] == ["2026-08-27", "2026-08-26"], \
+        "sorting must not mutate the caller's groups: the tally sums the same list"
     assert SORTS == ("recent", "actions", "project")
 
     m = merge_projects([("2026-08-26-phe", {"a": {"id": "a", "sid": "beef", "ts": 1}}),
