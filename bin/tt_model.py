@@ -199,15 +199,23 @@ def group_sessions(sessions):
 
 def merge_projects(sessions):
     """[(stem, state)] -> {project: one merged state}, every event tagged with
-    the session that recorded it. Ids are minted unique across every file, so
-    the merge cannot collide. The tag is the event's own session code, or its
-    file's date for anything recorded before stamping existed."""
+    the session that recorded it. The tag is the event's own session code, or
+    its file's date for anything recorded before stamping existed.
+
+    An id is normally unique to one file, but term/diagram dedupe (#140)
+    reuses an id across files on purpose: the current copy lands in today's
+    file while an older file keeps its own history under the same id. poll()
+    hands sessions newest-file-first, so a blind last-write-wins overwrite
+    would let the OLDER, stale copy win simply for being processed last - the
+    higher `ts` must win instead, regardless of file order."""
     out = {}
     for stem, state in sessions:
         date, project = parse_stem(stem)
         fallback = date[5:].replace("-", "") or project[:4]
         bucket = out.setdefault(project, {})
         for i, ev in state.items():
+            if i in bucket and bucket[i].get("ts", 0) > ev.get("ts", 0):
+                continue
             bucket[i] = {**ev, "_from": str(ev.get("sid") or fallback)}
     return out
 
@@ -647,6 +655,19 @@ def selftest():
     assert m["phe"]["b"]["_from"] == "0825", \
         "an event recorded before stamping falls back to its file's date"
     assert merge_projects([]) == {}
+
+    # #140: term/diagram dedupe now legitimately writes the SAME id into two
+    # dated files (today's current copy, an older file's own history). Built
+    # in poll()'s actual order - newest stem FIRST - so a blind last-write-
+    # wins overwrite (which would let the older, stale copy win for being
+    # processed LAST) fails this, and only a real ts-comparison passes.
+    same_id = merge_projects([
+        ("2026-08-27-phe", {"z": {"id": "z", "type": "term", "term": "FBA",
+                                  "intuitive": "new", "ts": 900}}),
+        ("2020-01-01-phe", {"z": {"id": "z", "type": "term", "term": "FBA",
+                                  "intuitive": "old", "ts": 1}})])
+    assert same_id["phe"]["z"]["intuitive"] == "new", \
+        "the same id split across two files must resolve to the higher ts, not last-file-wins (#140)"
 
     # weight: derived from content, never from measured pixels. A done item costs
     # nothing because it lives in a collapsed section.

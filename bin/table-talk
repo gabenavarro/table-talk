@@ -123,12 +123,12 @@ _DATED_STEM = re.compile(r"^\d{4}-\d{2}-\d{2}-(.+)$")
 
 
 def find_project_dup(path, type_, field, key):
-    """path's project, every dated file, newest first -> (file, id) of an
-    existing type_ event whose field matches key case-insensitively, or
-    (None, None). Files roll over daily (one date+project per file), so a
-    term/diagram recorded again on a later day must find the id already
-    minted for it in an OLDER file instead of never looking past today's -
-    #140."""
+    """path's project, every dated file, newest first -> the id of an
+    existing type_ event whose field matches key case-insensitively, or None.
+    Files roll over daily (one date+project per file), so a term/diagram
+    recorded again on a later day must find the id already minted for it in
+    an OLDER file instead of never looking past today's, and only reuse that
+    id - the caller still writes into today's file (#140)."""
     m = _DATED_STEM.match(path.stem)
     pattern = f"*-{glob.escape(m.group(1))}.jsonl" if m else path.name
     for p in sorted(DATA_DIR.glob(pattern), reverse=True):
@@ -137,8 +137,8 @@ def find_project_dup(path, type_, field, key):
                   if e.get("type") == type_ and e.get(field, "").lower() == key.lower()),
                  None)
         if i is not None:
-            return p, i
-    return None, None
+            return i
+    return None
 
 
 def session_code(env=None):
@@ -161,36 +161,39 @@ def add_event(project, fields):
 
 def add_term(path, term, intuitive, technical):
     """Same term (case-insensitive), anywhere in this project's dated files ->
-    reuse its id and append the update to the file that already holds it
-    (never today's new file), so fold()ing that file alone - not just the
-    dashboard's merged project view - already shows the latest definition
-    and nothing duplicated (#140)."""
+    reuse its id so the merged glossary shows one row, but ALWAYS append to
+    `path` (today's file) - never to the older file that minted the id - so
+    the session recording it can see its own row on its own card: writing
+    into an old file instead would make that file's summarize.latest jump to
+    now, and this session's fold would show nothing it just recorded (#140).
+    merge_projects keeps the newest-ts copy when an id spans files."""
     with mint_lock():
-        target, i = find_project_dup(path, "term", "term", term)
-        if target is None:
-            target, i = path, new_id()
+        existing = find_project_dup(path, "term", "term", term)
+        i = existing if existing is not None else new_id()
         ev = {"id": i, "type": "term", "term": term, "intuitive": intuitive,
               "technical": technical, "ts": int(time.time())}
         if (s := session_code()):
             ev.setdefault("sid", s)
-        append(target, ev)
+        append(path, ev)
     return i
 
 
 def add_diagram(path, title, mermaid):
     """Same title (case-insensitive), anywhere in this project's dated files
-    -> reuse its id, replace the source in the file that already holds it: a
-    diagram is iterated on, never accumulated - even across a day boundary
-    (#140)."""
+    -> reuse its id so the merged view shows one, current diagram, but ALWAYS
+    append to `path` (today's file) - never to the older file that minted the
+    id - so the session recording it can see its own row on its own card
+    (#140). merge_projects keeps the newest-ts copy when an id spans files,
+    so the older file's superseded source is what the wall stops showing,
+    while that file's own history still honestly says it was recorded there."""
     with mint_lock():
-        target, i = find_project_dup(path, "diagram", "title", title)
-        if target is None:
-            target, i = path, new_id()
+        existing = find_project_dup(path, "diagram", "title", title)
+        i = existing if existing is not None else new_id()
         ev = {"id": i, "type": "diagram", "title": title,
               "mermaid": mermaid, "ts": int(time.time())}
         if (s := session_code()):
             ev.setdefault("sid", s)
-        append(target, ev)
+        append(path, ev)
     return i
 
 
@@ -427,7 +430,9 @@ def selftest():
             pass
         # #140: files roll over daily, so recording the SAME term/diagram
         # again on a LATER day must find the id already minted for it in an
-        # OLDER file of the same project - not just within today's file.
+        # OLDER file of the same project, but the new event still belongs to
+        # TODAY's file - the session recording it must see its own row on its
+        # own card, and the older file must keep its history undisturbed.
         old_term_file = Path(td) / "2020-01-01-dated.jsonl"
         old_term_file.touch()
         append(old_term_file, {"id": "fva1", "type": "term", "term": "FVA",
@@ -435,11 +440,11 @@ def selftest():
         today_dated = session_file("dated")
         reused_term = add_term(today_dated, "fva", "new", "new t")
         assert reused_term == "fva1", \
-            "recording the same term on a later day must reuse its id, not mint a duplicate glossary row (#140)"
-        assert fold(old_term_file)["fva1"]["intuitive"] == "new", \
-            "the update must land in the file that already holds the term, so THAT file's own fold is already correct, not only the dashboard's merged project view (#140)"
-        assert "fva1" not in fold(today_dated), \
-            "the update must not ALSO be written into today's file - one file must hold the term, not two (#140)"
+            "recording the same term on a later day must reuse its id, so the merged glossary shows one row, not a duplicate (#140)"
+        assert fold(today_dated)["fva1"]["intuitive"] == "new", \
+            "the new event must land in TODAY's file, so the session that just recorded it sees it on its own card, not only in an old file it never touched (#140)"
+        assert fold(old_term_file)["fva1"]["intuitive"] == "old", \
+            "the OLDER file must be left untouched - it honestly recorded that definition then, and writing into it would falsify its recency (#140)"
 
         old_diagram_file = Path(td) / "2020-01-01-dgram.jsonl"
         old_diagram_file.touch()
@@ -449,10 +454,10 @@ def selftest():
         reused_diagram = add_diagram(today_dgram, "flow", "flowchart LR\n  a --> z")
         assert reused_diagram == "dg01", \
             "recording the same diagram title on a later day must reuse its id, not mint a duplicate (#140)"
-        assert fold(old_diagram_file)["dg01"]["mermaid"].endswith("a --> z"), \
-            "the replaced source must land in the file that already holds the diagram, so a lone fold shows the latest version, never both (#140)"
-        assert "dg01" not in fold(today_dgram), \
-            "the replacement must not ALSO be written into today's file (#140)"
+        assert fold(today_dgram)["dg01"]["mermaid"].endswith("a --> z"), \
+            "the replacement source must land in TODAY's file, so the recording session sees its own diagram on its own card (#140)"
+        assert fold(old_diagram_file)["dg01"]["mermaid"].endswith("a --> b"), \
+            "the OLDER file's own history must not be rewritten (#140)"
     from types import SimpleNamespace as NS
     assert with_extras({"a": 1}, NS(diagram="x", intuitive=None)) == {"a": 1, "diagram": "x"}
     assert with_extras({}, NS()) == {}, "absent flags write nothing"
