@@ -6,7 +6,7 @@ description: Use in EVERY conversation, at the start, before any other work — 
 # table-talk
 
 State: `~/.local/share/table-talk/*.jsonl` (one file per date+project).
-Live view: `table-talk serve` → http://127.0.0.1:8731
+Live view: `table-talk serve` — `table-talk url` prints where it is
 
 ## The action rule
 
@@ -114,7 +114,7 @@ job is jargon-heavy; skip it when the headline is already plain.
 
 For a picture too big for a card, record a standalone mermaid diagram —
 `table-talk diagram "<mermaid source>" --title "<short name>"` — and point
-the user at the dashboard (http://127.0.0.1:8731), which renders it live;
+the user at the dashboard (the URL `table-talk url` prints), which renders it live;
 the terminal cannot. Re-recording the same title replaces that diagram.
 Portrait here too: `flowchart TD`, never `LR` — the dashboard renders it in
 the app's own font and colours inside a narrow card, and a landscape chain
@@ -173,7 +173,7 @@ technical = the precise definition, jargon spelled out.
   background task never completes. The CLI refuses under `CLAUDECODE`; do not
   work around it with `--force` or by launching the dash script directly — if
   the dashboard is down, say so once in the reply body and move on.
-- Liveness: `curl -sf -o /dev/null --max-time 2 http://127.0.0.1:8731/ && echo up || echo down`.
+- Liveness: `curl -sf -o /dev/null --max-time 2 "$(table-talk url)" && echo up || echo down`.
   Never `pgrep -f "table-talk serve"` — serve execs into table-talk-dash.py,
   so that pattern matches nothing even while the dashboard runs.
 - Recording commands (`action`, `task`, `progress`, `done`, `term`, `diagram`)
