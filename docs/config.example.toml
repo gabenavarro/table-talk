@@ -4,6 +4,11 @@
 # and change only what you want to override. A missing or malformed file
 # just falls back to these defaults; it never stops the dashboard starting.
 
+# The data directory itself is not a config key — it comes from the
+# TABLE_TALK_DIR environment variable (default ~/.local/share/table-talk), read
+# by both the CLI and the dashboard, so `TABLE_TALK_DIR=docs/demo table-talk
+# serve` shows a different set of logs without touching your own.
+
 [server]
 port = 8731             # dashboard HTTP port
 poll_seconds = 2.0       # how often the dashboard re-reads the log files
