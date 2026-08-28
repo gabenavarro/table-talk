@@ -676,7 +676,11 @@ def _prompt(cls, title, count, toggles=None, opened=None, key="", force=False, b
     """
     from nicegui import ui
     shown = force or bool(opened and opened.get(key))
-    with ui.element("div").classes(f"pr {cls}") as line:
+    # A BUTTON, not a div: collapsing the sections you are not working in is the
+    # app's core organising gesture, and as a div it was mouse-only while
+    # advertising cursor:pointer. The sheet already states the rule this broke -
+    # "the keyboard is an accelerator, never the only way in".
+    with ui.element("button").classes(f"pr {cls}") as line:
         ui.label("❯").classes("g")
         ui.label(title)
         tail = "" if toggles is None else (" ▾" if shown else " ▸")
@@ -1223,6 +1227,17 @@ def selftest():
     import ast
     src = Path(__file__).read_text()
     code = src.split("def selftest():")[0] + src.split("\ndef ago(", 1)[1]
+    assert 'ui.element("button").classes(f"pr {cls}")' in code, \
+        "collapsing a section is the app's core organising gesture and it was " \
+        "mouse-only: a div with cursor:pointer advertises operability it does " \
+        "not have, against this file's own rule that the keyboard is an " \
+        "accelerator and never the only way in"
+    assert 'tri.props["role"] = "button"' in code and "keydown.enter.stop" in code, \
+        "the drawer triangle cannot BE a button - it sits inside the row button " \
+        "and nesting them is invalid - so it declares the role and the keys by " \
+        "hand, with .stop keeping Enter off the row, which scopes the wall"
+    assert ".pr:focus-visible" in css and ".dw-fold:focus-visible" in css, \
+        "a control you can reach by keyboard must show where the focus is"
     assert "find_bar.set_visibility(drawer_open)" in code, \
         "the collapsed drawer is a 54px rail and only the input can shrink, so " \
         "it went to zero width: an input that is present, focusable and " \
@@ -1954,7 +1969,15 @@ def main(port=None):
                         tri.classes("dw-g" if single else "dw-g dw-fold")
                         if not single:
                             tri.props["title"] = f'fold {g["project"]}'
-                            tri.on("click.stop", lambda _, p=g["project"]: on_group_fold(p), [])
+                            # It sits INSIDE the .dw-row button, and a button
+                            # inside a button is invalid, so the role and the
+                            # keys are declared by hand. .stop keeps Enter and
+                            # Space off the row, which scopes the wall - the
+                            # same reason the click handler stops.
+                            tri.props["tabindex"] = "0"
+                            tri.props["role"] = "button"
+                            for ev_name in ("click.stop", "keydown.enter.stop", "keydown.space.stop"):
+                                tri.on(ev_name, lambda _, p=g["project"]: on_group_fold(p), [])
                         with ui.element("div").classes("dw-l1"):
                             ui.label(g["project"]).classes("dw-nm")
                             ui.label(g["sessions"][0]["date"] if single
