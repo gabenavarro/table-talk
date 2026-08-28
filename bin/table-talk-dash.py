@@ -964,6 +964,11 @@ def selftest():
         "clicking an id copies the ID ITSELF: an identifier that pastes as a " \
         "command cannot be used to refer to the item, grep for it, or build " \
         "any other command out of it"
+    assert COPY_JS.count("const cmd = b.dataset.id;") == 1 \
+        and COPY_JS.index("[0-9a-f]{4,}") < COPY_JS.index("writeText"), \
+        "the id goes on the clipboard VERBATIM, and the guard runs BEFORE the " \
+        "write: anything spliced around the id is not greppable, and a guard " \
+        "after the write puts a hostile data-id on the clipboard anyway"
     assert ".tt-dim" in css and ".tt-hit" in css, "dim and highlight need styles to mean anything"
     assert ".dw-find" in css and ".tt-none" in css, "the filter bar and empty wall need styles"
     assert default_cols(2000) == 3 and default_cols(1400) == 2 and default_cols(800) == 1
