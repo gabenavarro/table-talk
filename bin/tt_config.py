@@ -34,7 +34,11 @@ DEFAULTS = {
     "server": {"port": 8731, "poll_seconds": 2.0},
     "ui": {"columns": 0, "drawer_open": True, "filter_debounce_ms": 100,
            "collapsed_sections": ["glossary", "done"]},
-    "links": {"open_command": "xdg-open", "extra_roots": []},
+    # xdg-open does not exist on macOS, and both launchers swallow a missing
+    # command into stderr the user is not watching - deliberately, and pinned -
+    # so the wrong default there presents as links that are simply decorative.
+    "links": {"open_command": "open" if sys.platform == "darwin" else "xdg-open",
+              "extra_roots": []},
     "theme": {"default": "system", "dark": _DARK, "light": _LIGHT},
 }
 
@@ -95,6 +99,11 @@ def selftest():
         for name, value in tokens.items():
             assert f"--{name}:{value};" in decls, \
                 f"tt.css {block[:-1]} --{name} does not match tt_config's {value}"
+    assert DEFAULTS["links"]["open_command"] == ("open" if sys.platform == "darwin"
+                                                 else "xdg-open"), \
+        "the opener is per platform: xdg-open is absent on macOS, and a missing " \
+        "command is swallowed into stderr nobody is watching, so the links just " \
+        "look decorative there"
     assert valid_colour("#fb4934") and valid_colour("#FFF") and valid_colour("#1d2021ff")
     assert not valid_colour("red"), "only hex is accepted"
     assert not valid_colour("#12"), "too short"

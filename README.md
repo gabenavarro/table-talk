@@ -114,7 +114,7 @@ data rather than the directory you launched from. (Before v5 it landed in a
 `~/.config/table-talk/config.toml` (or point `TABLE_TALK_CONFIG` at another
 file) sets the port, poll interval, columns, drawer state, theme, and
 `links.open_command` — the command used to open a clicked file path in your
-editor. Every key, its default, and what it does is in
+editor (`open` on macOS, `xdg-open` elsewhere). Every key, its default, and what it does is in
 [`docs/config.example.toml`](docs/config.example.toml); copy it to get
 started. A missing or broken file just falls back to the defaults.
 
