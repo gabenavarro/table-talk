@@ -20,7 +20,13 @@ def fold(path):
     state = {}
     try:
         raw = path.read_bytes()
-    except FileNotFoundError:
+    except OSError:
+        # OSError, not FileNotFoundError: the data dir is a directory anyone can
+        # drop things in, and a log that is unreadable (chmod, a stale mount) or
+        # a DIRECTORY whose name ends .jsonl both raise here. Either one used to
+        # take down every session at once, because poll() folds them all before
+        # it draws anything and the next poll failed identically - a permanent
+        # freeze presented as a stale spinner.
         return state
     for line in raw.splitlines():
         if not line.strip():
@@ -33,9 +39,18 @@ def fold(path):
             # page kills orjson, which NiceGUI requires, and with it the whole
             # render - not one cell. A `\\udcff` escape is plain ASCII in the
             # file, so the decode above cannot catch it.
-            state[eid] = {**state.get(eid, {}),
-                          **{k: (v.encode("utf-8", "backslashreplace").decode("utf-8")
-                                 if isinstance(v, str) else v) for k, v in ev.items()}}
+            clean = {k: (v.encode("utf-8", "backslashreplace").decode("utf-8")
+                         if isinstance(v, str) else v) for k, v in ev.items()}
+            # A ts that is not a number is corrupt, and every consumer compares
+            # it (summarize's max, the sort keys, ago, the change watermark), so
+            # one bad line raised TypeError out of poll() before a single window
+            # was drawn. Normalised HERE because this is the one boundary they
+            # all route through - and only when the key is PRESENT, or a partial
+            # update with no ts of its own would erase the real one.
+            if "ts" in clean and (isinstance(clean["ts"], bool)
+                                  or not isinstance(clean["ts"], (int, float))):
+                clean["ts"] = 0
+            state[eid] = {**state.get(eid, {}), **clean}
         except (UnicodeDecodeError, json.JSONDecodeError, TypeError, KeyError):
             pass
     return state
@@ -49,7 +64,7 @@ def fold_cached(path):
     collapses the 2 s tick to O(files stat) regardless of history size."""
     try:
         st = path.stat()
-    except FileNotFoundError:
+    except OSError:      # same reasoning as fold(): a bad entry is not a crash
         return {}
     key = (st.st_mtime, st.st_size)
     hit = _fold_cache.get(path)
@@ -467,6 +482,35 @@ def selftest():
             fh.write(json.dumps({"id": "9f9f", "type": "task", "what": "bad \udcff"}) + "\n")
         bad = fold(p)["9f9f"]["what"]
         assert bad == "bad \\udcff", "a lone surrogate is escaped on the way in"
+
+        # One bad entry in the data dir must cost itself, never the whole wall:
+        # poll() folds every file before drawing anything, and the next poll
+        # failed identically, so a freeze was permanent and looked like a stale
+        # spinner.
+        unread = Path(td) / "2026-08-27-locked.jsonl"
+        unread.write_text('{"id":"u1","type":"task","ts":1}\n')
+        unread.chmod(0o000)
+        try:
+            assert fold(unread) == {} and fold_cached(unread) == {}, \
+                "an unreadable log folds to empty; it must not raise"
+        finally:
+            unread.chmod(0o644)
+        adir = Path(td) / "2026-08-27-oops.jsonl"
+        adir.mkdir()
+        assert fold(adir) == {} and fold_cached(adir) == {}, \
+            "a DIRECTORY named *.jsonl matches the glob and must not raise either"
+
+        tsbad = Path(td) / "2026-08-25-ts.jsonl"
+        tsbad.write_text(json.dumps({"id": "t1", "type": "task", "ts": "nope"}) + "\n")
+        assert fold(tsbad)["t1"]["ts"] == 0, \
+            "a ts that is not a number is corrupt: every consumer COMPARES it, " \
+            "so one bad line raised TypeError before a single window was drawn"
+        summarize(fold(tsbad))    # raises TypeError if the normalisation slipped
+        keep = Path(td) / "2026-08-24-keep.jsonl"
+        keep.write_text(json.dumps({"id": "k1", "type": "task", "ts": 99}) + "\n"
+                        + json.dumps({"id": "k1", "status": "done"}) + "\n")
+        assert fold(keep)["k1"]["ts"] == 99, \
+            "a partial update carrying no ts must not erase the real one"
         bad.encode("utf-8")   # raises UnicodeEncodeError if one ever survives
     assert parse_stem("2026-08-26-phephree") == ("2026-08-26", "phephree")
     assert parse_stem("2026-08-26-gcp-aws-xfer") == ("2026-08-26", "gcp-aws-xfer"), \

@@ -1228,6 +1228,10 @@ def selftest():
         "on_focus must go through scroll_js, which hands the key to JS as a " \
         "json.dumps LITERAL. Spliced into a selector, --project \"y'+alert(9)+'z\" " \
         "ran on an ordinary drawer click - and don't-panic broke the scroll"
+    assert 'logging.exception("could not paint window' in code, \
+        "one unrenderable row must cost its own card, not the wall: tick()'s " \
+        "guard is all-or-nothing and the next poll fails identically, so the " \
+        "freeze is permanent and shows only as a stale spinner"
     assert code.index("paint_window(win, k, wall_states[k]") < code.index('win["sig"] = sig'), \
         "the paint signature is recorded AFTER the paint: assigned first, one " \
         "exception mid-build marks a half-drawn window current forever"
@@ -2073,7 +2077,15 @@ def main(port=None):
             changed = changed_ids(wall_states[k], seen_at.get(k, opened_ts))
             sig = (query, newest, wall_states[k], changed)
             if win["sig"] != sig:
-                paint_window(win, k, wall_states[k], newest, query, changed)
+                # Per WINDOW, so one unrenderable row costs its own card and not
+                # the wall: tick()'s guard is all-or-nothing, and the poll that
+                # follows a bad row fails at exactly the same place, so the
+                # freeze is permanent and shows only as a stale spinner.
+                try:
+                    paint_window(win, k, wall_states[k], newest, query, changed)
+                except Exception:
+                    logging.exception("could not paint window %s", k)
+                    continue
                 # AFTER the paint, never before: an exception mid-build (one
                 # non-string field is enough) would otherwise leave the window
                 # permanently marked up to date and truncated where it threw.

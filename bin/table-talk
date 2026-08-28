@@ -24,7 +24,11 @@ def fold(path):
     state = {}
     try:
         raw = path.read_bytes()
-    except FileNotFoundError:
+    except OSError:
+        # OSError, not FileNotFoundError: all_ids() folds EVERY file in the data
+        # dir on every record, so one unreadable log (chmod, stale mount) or a
+        # directory named *.jsonl made `table-talk task ...` die with a raw
+        # traceback instead of recording.
         return state
     for n, line in enumerate(raw.splitlines(), 1):
         if not line.strip():
