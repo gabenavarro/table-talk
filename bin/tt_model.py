@@ -28,7 +28,14 @@ def fold(path):
         try:
             ev = json.loads(line.decode("utf-8"))
             eid = str(ev["id"])
-            state[eid] = {**state.get(eid, {}), **ev}
+            # Also on the way IN, so a log written before the CLI scrubbed at
+            # the write boundary still renders: a lone surrogate reaching the
+            # page kills orjson, which NiceGUI requires, and with it the whole
+            # render - not one cell. A `\\udcff` escape is plain ASCII in the
+            # file, so the decode above cannot catch it.
+            state[eid] = {**state.get(eid, {}),
+                          **{k: (v.encode("utf-8", "backslashreplace").decode("utf-8")
+                                 if isinstance(v, str) else v) for k, v in ev.items()}}
         except (UnicodeDecodeError, json.JSONDecodeError, TypeError, KeyError):
             pass
     return state
@@ -451,6 +458,16 @@ def selftest():
             fh.write('{"id":"e5f6","type":"term","term":"Z","ts":9}\n')
         assert "e5f6" in fold_cached(p) and "e5f6" not in before, "cache invalidates on change"
         assert fold_cached(Path(td) / "missing.jsonl") == {}, "cached fold tolerates missing file"
+
+        # A lone surrogate (argv decodes undecodable bytes with surrogateescape)
+        # is plain ASCII once json.dumps escapes it, so the decode above cannot
+        # catch it - and orjson, which NiceGUI requires, refuses the payload and
+        # stops the whole page rendering rather than spoiling one cell.
+        with open(p, "a") as fh:
+            fh.write(json.dumps({"id": "9f9f", "type": "task", "what": "bad \udcff"}) + "\n")
+        bad = fold(p)["9f9f"]["what"]
+        assert bad == "bad \\udcff", "a lone surrogate is escaped on the way in"
+        bad.encode("utf-8")   # raises UnicodeEncodeError if one ever survives
     assert parse_stem("2026-08-26-phephree") == ("2026-08-26", "phephree")
     assert parse_stem("2026-08-26-gcp-aws-xfer") == ("2026-08-26", "gcp-aws-xfer"), \
         "a project name may contain hyphens"
