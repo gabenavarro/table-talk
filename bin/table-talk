@@ -191,11 +191,32 @@ def update(id_, fields):
     append(f, {"id": id_, "ts": int(time.time()), **fields})
 
 
-def cmd_show(project):
+def cmd_show(project, open_only=False, mine=False):
+    """Dump folded state, one JSON object per line under a `== stem` header.
+
+    --open narrows to obligations still outstanding, which is what a session
+    needs to write its own reply tables; a term or a diagram is reference, never
+    an obligation, so neither survives it. --mine narrows to rows THIS session
+    recorded: one log file is one date+project and several sessions share it, so
+    an unfiltered dump makes a session claim asks it never made and cannot
+    answer. A file with nothing to show prints no header.
+    """
+    me = session_code()
+    if mine and not me:
+        sys.exit("error: --mine needs CLAUDE_CODE_SESSION_ID, which only an "
+                 "agent session has; drop it to see every session's rows")
     pattern = f"*-{glob.escape(project)}.jsonl" if project else "*.jsonl"
     for path in sorted(DATA_DIR.glob(pattern)):
+        rows = list(fold(path).values())
+        if open_only:
+            rows = [e for e in rows
+                    if e.get("type") in ("action", "task") and e.get("status") != "done"]
+        if mine:
+            rows = [e for e in rows if e.get("sid") == me]
+        if not rows:
+            continue
         print(f"== {path.stem}")
-        for e in fold(path).values():
+        for e in rows:
             print(json.dumps(e))
 
 
@@ -267,6 +288,47 @@ def selftest():
         got = fold(f)[i_bad]["what"]
         assert got == "log \\udcfe", "a surrogate is escaped at the write boundary"
         got.encode("utf-8")   # raises UnicodeEncodeError if one ever survives
+        # cmd_show's filters: one log file is one date+project and SEVERAL
+        # sessions share it, so an unfiltered dump makes a session claim asks it
+        # never made. Captured rather than eyeballed - the skill runs this.
+        import io, contextlib
+        os.environ["CLAUDE_CODE_SESSION_ID"] = "aaaa-x"
+        try:
+            mine_open = add_event("shw", {"type": "action", "status": "open",
+                                          "background": "mine", "why": "w", "rec": "r"})
+            mine_done = add_event("shw", {"type": "action", "status": "open",
+                                          "background": "closed", "why": "w", "rec": "r"})
+            update(mine_done, {"status": "done"})
+            add_term(session_file("shw"), "T", "i", "t")
+            os.environ["CLAUDE_CODE_SESSION_ID"] = "bbbb-y"
+            theirs = add_event("shw", {"type": "action", "status": "open",
+                                       "background": "theirs", "why": "w", "rec": "r"})
+        finally:
+            os.environ["CLAUDE_CODE_SESSION_ID"] = "aaaa-x"
+
+        def _show(**kw):
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                cmd_show("shw", **kw)
+            return [json.loads(ln) for ln in buf.getvalue().splitlines()
+                    if ln.startswith("{")]
+
+        ids = {e["id"] for e in _show(open_only=True)}
+        assert mine_open in ids and theirs in ids, "--open spans every session"
+        assert mine_done not in ids, "--open drops what is already done"
+        assert not any(e["type"] == "term" for e in _show(open_only=True)), \
+            "a term is reference, never an obligation, so --open must not list it"
+        mine_ids = {e["id"] for e in _show(open_only=True, mine=True)}
+        assert mine_ids == {mine_open}, \
+            "--mine is what stops a session claiming another session's asks"
+        del os.environ["CLAUDE_CODE_SESSION_ID"]
+        try:
+            _show(mine=True)
+            raise AssertionError("--mine without a session id must refuse, not show everything")
+        except SystemExit:
+            pass
+        os.environ["CLAUDE_CODE_SESSION_ID"] = "aaaa-x"
+
         assert find_file_with_id("a1b2") == f
         assert find_file_with_id("ffff") is None
         i3 = add_event("proj", {"type": "task", "status": "open", "what": "x"})
@@ -385,6 +447,10 @@ def main():
 
     sh = sub.add_parser("show", help="dump folded state")
     sh.add_argument("project", nargs="?")
+    sh.add_argument("--open", action="store_true",
+                    help="only actions and jobs still outstanding")
+    sh.add_argument("--mine", action="store_true",
+                    help="only rows this session recorded (needs CLAUDE_CODE_SESSION_ID)")
 
     sv = sub.add_parser("serve", help="launch the dashboard")
     sv.add_argument("--port", type=int, help="default: server.port from the config (8731)")
@@ -413,7 +479,7 @@ def main():
     elif args.cmd == "diagram":
         print(add_diagram(session_file(args.project), args.title, args.mermaid))
     elif args.cmd == "show":
-        cmd_show(args.project)
+        cmd_show(args.project, args.open, args.mine)
     elif args.cmd == "serve":
         cmd_serve(args.port, args.force)
     else:

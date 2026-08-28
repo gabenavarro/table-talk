@@ -132,7 +132,13 @@ is the one place the two disagree. Another project's actions belong to its own
 card, never to this reply. Check before writing the tables rather than trusting
 memory:
 
-    table-talk show "$(basename "$PWD")"
+    table-talk show "$(basename "$PWD")" --open
+
+Every row that command prints carries `sid`, the code of the session that
+recorded it — several sessions share one project's log. Add `--mine` to see
+only your own. List another session's row only if you can actually answer for
+it; otherwise it belongs to that session's reply and to its own window on the
+wall, and claiming it asks the user to answer someone else's question.
 
 **🔵 Background work**
 | ID | What | Progress |
