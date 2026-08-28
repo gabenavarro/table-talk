@@ -209,6 +209,23 @@ def with_extras(fields, args):
     return fields
 
 
+def progress_fields(args):
+    """The event one `progress` call appends.
+
+    A reading gets its OWN clock. ts moves on every append - it has to, it
+    drives recency and the change gutters - but the card prints the reading's
+    time, and an --intuitive or --diagram amend takes no reading. Without
+    read_ts, annotating a job re-dated its bar to now while the number under it
+    stayed hours old: the exact lie the clock was added to prevent.
+    """
+    fields = with_extras({"progress": args.text} if args.text else {}, args)
+    if args.pct is not None:            # 0 is a reading; with_extras drops falsy
+        fields["pct"] = args.pct
+    if "progress" in fields or "pct" in fields:
+        fields["read_ts"] = int(time.time())
+    return fields
+
+
 def update(id_, fields):
     """Append a partial update to the file that contains id_ (folding is per-file)."""
     f = find_file_with_id(id_)
@@ -459,6 +476,17 @@ def selftest():
         assert fold(old_diagram_file)["dg01"]["mermaid"].endswith("a --> b"), \
             "the OLDER file's own history must not be rewritten (#140)"
     from types import SimpleNamespace as NS
+    # progress_fields: the reading's clock must not move when no reading was
+    # taken. This is the whole reason the field exists.
+    assert "read_ts" in progress_fields(NS(text="epoch 3/10", pct=None, intuitive=None, diagram=None))
+    assert "read_ts" in progress_fields(NS(text=None, pct=0, intuitive=None, diagram=None)), \
+        "0% is a reading like any other"
+    amend = progress_fields(NS(text=None, pct=None, intuitive="plain words", diagram=None))
+    assert amend == {"intuitive": "plain words"}, \
+        "an amend takes no reading, so it must not re-date the bar: the card " \
+        "would claim a fresh clock over an hours-old number"
+    assert progress_fields(NS(text=None, pct=None, intuitive=None, diagram="x")) == {"diagram": "x"}
+
     assert with_extras({"a": 1}, NS(diagram="x", intuitive=None)) == {"a": 1, "diagram": "x"}
     assert with_extras({}, NS()) == {}, "absent flags write nothing"
     assert with_extras({}, NS(diagram="", intuitive="i")) == {"intuitive": "i"}, \
@@ -562,10 +590,7 @@ def main():
         print(add_event(args.project, with_extras(
             {"type": "task", "status": "open", "what": args.what}, args)))
     elif args.cmd == "progress":
-        fields = with_extras({"progress": args.text} if args.text else {}, args)
-        if args.pct is not None:        # 0 is a reading; with_extras drops falsy
-            fields["pct"] = args.pct
-        update(args.id, fields)
+        update(args.id, progress_fields(args))
     elif args.cmd == "done":
         update(args.id, {"status": "done"})
     elif args.cmd == "term":

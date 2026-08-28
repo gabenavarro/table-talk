@@ -572,8 +572,11 @@ def _task_row(ev, query, changed):
                 # live one. ABSOLUTE, never "12m ago": a row repaints only when
                 # its data changes, so a relative age would itself freeze and
                 # lie about the very freshness it is there to report.
-                if ev.get("ts"):
-                    ui.label(f"as of {hm(ev['ts'])}").classes("asof")
+                # read_ts is when a READING was taken; ts moves on any append,
+                # including an amend that took no reading. Falls back to ts for
+                # rows recorded before read_ts existed.
+                if ev.get("read_ts") or ev.get("ts"):
+                    ui.label(f"as of {hm(ev.get('read_ts') or ev['ts'])}").classes("asof")
                 if text:
                     _cell(text, query, "raw")
             if ev.get("intuitive"):
@@ -1352,9 +1355,11 @@ def selftest():
     assert "M.progress_pct(ev)" in code, \
         "the bar draws the EXPLICIT reading when one was recorded: scraping " \
         "prose read '92% of 5039 genes above zero' as a 92%-complete job"
-    assert 'f"as of {hm(ev[\'ts\'])}"' in code and '"%H:%M"' in code, \
-        "the reading's clock is ABSOLUTE: a row repaints only when its data " \
-        "changes, so a relative age would freeze and lie about freshness"
+    assert '''f"as of {hm(ev.get('read_ts') or ev['ts'])}"''' in code and '"%H:%M"' in code, \
+        "the clock shows when a READING was taken, not when the row was last " \
+        "touched: ts moves on any append, so an --intuitive amend re-dated the " \
+        "bar to now over an hours-old number. Absolute, too - a row repaints " \
+        "only when its data changes, so a relative age would freeze and lie"
     assert ".asof" in css, "the clock beside the bar needs a style to be legible"
     assert "M.art_spans" in code, \
         "art is split by the property-tested model classifier and rendered as " \
