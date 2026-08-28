@@ -21,6 +21,7 @@ collapsed_sections = ["glossary", "done"]  # window sections that start folded (
 
 [links]
 open_command = "xdg-open"  # command used to open a clicked path, e.g. "code" or "$EDITOR"
+                            # (default: "open" on macOS, "xdg-open" elsewhere)
 extra_roots = []            # extra directories a clicked path may resolve under
 
 [theme]
