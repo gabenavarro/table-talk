@@ -1,3 +1,7 @@
 __pycache__/
 *.pyc
 .nicegui/
+# UI state follows the DATA dir (see the dashboard's NICEGUI_STORAGE_PATH note),
+# and the demo's data dir lives in the repo - so the first command the README
+# recommends would otherwise leave an untracked directory behind.
+.ui/

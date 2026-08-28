@@ -36,7 +36,8 @@ one before installing anything but [uv](https://docs.astral.sh/uv/):
 
     git clone https://github.com/gabenavarro/table-talk.git
     cd table-talk
-    TABLE_TALK_DIR=docs/demo ./bin/table-talk serve      # http://127.0.0.1:8731
+    TABLE_TALK_DIR=docs/demo ./bin/table-talk serve                # http://127.0.0.1:8731
+    TABLE_TALK_DIR=docs/demo ./bin/table-talk serve --port 8732    # alongside your own
 
 Two projects, four sessions, live actions and jobs, a mermaid diagram and a
 glossary — enough to press `\`, `s`, `!` and `u` and see what they do.
