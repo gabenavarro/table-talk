@@ -22,3 +22,17 @@ jobs:
         with:
           python-version: "3.12"
       - run: ./test.sh
+
+  # The CLI and the model are stdlib-only and the README promises 3.10, so the
+  # promise is tested rather than asserted. tt_config is deliberately absent:
+  # it needs tomllib (3.11+) and only the dashboard imports it, where uv brings
+  # its own interpreter.
+  cli-oldest-python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+      - run: python bin/table-talk --selftest
+      - run: python bin/tt_model.py --selftest
