@@ -66,8 +66,8 @@ two seconds.
   collapses, and a shut one keeps a █/░ bar reporting what it holds. Progress
   text is read for a percentage and drawn as a bar; an attached `--diagram`
   sketch draws centered under its item in the theme's inks;
-  a coloured gutter marks whatever moved since you last looked. Click any id to
-  copy `table-talk done <id>`. Press `u` to merge: one window per project
+  a coloured gutter marks whatever moved since you last looked. Click any id
+  to copy it. Press `u` to merge: one window per project
   holding every session's actions, jobs, glossary and done, each row tagged
   with the session code that recorded it (or its date for events recorded
   before session stamping existed) — the drawer still lists every real

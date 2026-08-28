@@ -55,13 +55,16 @@ def theme_css(theme):
     return block(":root", "light") + block("body.body--dark", "dark")
 
 
-# Ids hand you the command: one delegated listener, no server round-trip.
+# Clicking an id copies the ID: one delegated listener, no server round-trip.
+# It used to copy 'table-talk done <id>', which read as surprising - an
+# identifier that pastes as a command is unusable for referring to the item,
+# grepping for it, or building any other command out of it.
 COPY_JS = """<script>
 document.addEventListener('click', e => {
   const b = e.target.closest && e.target.closest('[data-id]');
   if (!b) return;
-  if (!/^[0-9a-f]{4,}$/.test(b.dataset.id || '')) return;  // it becomes a SHELL command
-  const cmd = 'table-talk done ' + b.dataset.id;
+  if (!/^[0-9a-f]{4,}$/.test(b.dataset.id || '')) return;  // never copy arbitrary text
+  const cmd = b.dataset.id;
   if (navigator.clipboard) navigator.clipboard.writeText(cmd).catch(() => {});
   b.classList.add('copied');
   setTimeout(() => b.classList.remove('copied'), 900);
@@ -341,8 +344,9 @@ def _dim(ev, query):
 
 
 def _id_button(ev, cls):
-    """The id IS the command. A nested label rather than a bare button so we stay
-    on public API; the delegated listener finds the button via closest().
+    """The id is a click-to-copy control. A nested label rather than a bare
+    button so we stay on public API; the delegated listener finds the button
+    via closest().
 
     The prop is assigned, never .props(f'data-id={...}'): see build_window."""
     from nicegui import ui
@@ -954,8 +958,12 @@ def selftest():
         "makes the bar say nothing needs you while something does"
     assert "data-id" in COPY_JS and "clipboard" in COPY_JS
     assert "[0-9a-f]{4,}" in COPY_JS, \
-        "what COPY_JS builds is a SHELL COMMAND the user pastes, so the id it " \
-        "splices must look like a minted id (secrets.token_hex) and nothing else"
+        "only a minted id (secrets.token_hex) is ever put on the clipboard, so " \
+        "a stray element carrying a data-id cannot copy arbitrary text"
+    assert "table-talk done" not in COPY_JS, \
+        "clicking an id copies the ID ITSELF: an identifier that pastes as a " \
+        "command cannot be used to refer to the item, grep for it, or build " \
+        "any other command out of it"
     assert ".tt-dim" in css and ".tt-hit" in css, "dim and highlight need styles to mean anything"
     assert ".dw-find" in css and ".tt-none" in css, "the filter bar and empty wall need styles"
     assert default_cols(2000) == 3 and default_cols(1400) == 2 and default_cols(800) == 1
