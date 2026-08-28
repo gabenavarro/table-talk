@@ -526,7 +526,7 @@ def _task_row(ev, query, changed):
         with ui.element("div"):
             _cell(ev.get("what", ""), query, "ttl")
             text = ev.get("progress", "")
-            pct = M.percent(text)
+            pct = M.progress_pct(ev)
             with ui.element("div").classes("meter"):
                 if pct is None:
                     with ui.element("div").classes("scan"):
@@ -538,6 +538,12 @@ def _task_row(ev, query, changed):
                         ui.label(filled)
                         ui.label(empty).classes("e")
                     ui.label(f"{pct}%").classes("pct")
+                # When the reading was taken, so a frozen bar cannot pass for a
+                # live one. ABSOLUTE, never "12m ago": a row repaints only when
+                # its data changes, so a relative age would itself freeze and
+                # lie about the very freshness it is there to report.
+                if ev.get("ts"):
+                    ui.label(f"as of {hm(ev['ts'])}").classes("asof")
                 if text:
                     _cell(text, query, "raw")
             if ev.get("intuitive"):
@@ -1265,6 +1271,13 @@ def selftest():
     assert "text-align:center" in art_rule and ".art-in{display:inline-block" in css, \
         "a full-width panel centres its art through an inline-block child: " \
         "text-align alone would centre every LINE and shear the drawing apart"
+    assert "M.progress_pct(ev)" in code, \
+        "the bar draws the EXPLICIT reading when one was recorded: scraping " \
+        "prose read '92% of 5039 genes above zero' as a 92%-complete job"
+    assert 'f"as of {hm(ev[\'ts\'])}"' in code and '"%H:%M"' in code, \
+        "the reading's clock is ABSOLUTE: a row repaints only when its data " \
+        "changes, so a relative age would freeze and lie about freshness"
+    assert ".asof" in css, "the clock beside the bar needs a style to be legible"
     assert "M.art_spans" in code, \
         "art is split by the property-tested model classifier and rendered as " \
         "label runs - never raw, never markup: it comes out of a LOG FILE"
@@ -1321,6 +1334,11 @@ def ago(ts, now=None):
 
 def stamp(ts):
     return datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def hm(ts):
+    """Wall-clock of one reading, for the label beside a progress bar."""
+    return datetime.fromtimestamp(ts).strftime("%H:%M")
 
 
 def main(port=None):

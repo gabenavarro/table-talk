@@ -335,6 +335,8 @@ def main():
     pr.add_argument("text", nargs="?", help="progress note; omit to only amend --intuitive/--diagram")
     pr.add_argument("--diagram", help="add or replace the item's ASCII sketch")
     pr.add_argument("--intuitive", help="add or replace the item's plain-English line")
+    pr.add_argument("--pct", type=int,
+                    help="explicit completion 0-100; beats any number found in the text")
 
     d = sub.add_parser("done", help="mark an item done")
     d.add_argument("id")
@@ -369,7 +371,10 @@ def main():
         print(add_event(args.project, with_extras(
             {"type": "task", "status": "open", "what": args.what}, args)))
     elif args.cmd == "progress":
-        update(args.id, with_extras({"progress": args.text} if args.text else {}, args))
+        fields = with_extras({"progress": args.text} if args.text else {}, args)
+        if args.pct is not None:        # 0 is a reading; with_extras drops falsy
+            fields["pct"] = args.pct
+        update(args.id, fields)
     elif args.cmd == "done":
         update(args.id, {"status": "done"})
     elif args.cmd == "term":
