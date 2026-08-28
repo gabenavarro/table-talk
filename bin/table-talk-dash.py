@@ -7,6 +7,7 @@
 import argparse
 import json
 import logging
+import os
 import subprocess
 import sys
 import time
@@ -16,6 +17,22 @@ from pathlib import Path
 import tt_config
 import tt_model as M
 from tt_model import DATA_DIR, fold_cached
+
+# Persistence belongs to the DATA, not to the shell that launched the server.
+# NiceGUI reads this once, at import, onto a CLASS attribute
+# (nicegui/storage.py: `path = Path(os.environ.get('NICEGUI_STORAGE_PATH',
+# '.nicegui')).resolve()`), so it has to be set before nicegui is first
+# imported anywhere in this process, and assigning app.storage.path
+# afterwards does nothing at all. Left unset, every UI choice - theme, marks,
+# folds, scope, sort and the seen-watermarks - lands in a .nicegui/ directory
+# beside whatever CWD `table-talk serve` ran from: serve from elsewhere and you
+# get a different dashboard, groups you opened re-fold because every project
+# reads as first-seen, and each launch directory gains an untracked folder.
+# setdefault, so someone who sets it deliberately still wins.
+os.environ.setdefault("NICEGUI_STORAGE_PATH", str(DATA_DIR / ".ui"))
+# NiceGUI's own mkdir for that directory is not parents=True, so a first run
+# with no data dir yet would fail on the first write instead of here.
+DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 CSS_PATH = Path(__file__).resolve().parent / "tt.css"
 
@@ -1223,6 +1240,11 @@ def selftest():
     assert code.index("<style>{load_css()}</style>") < code.index('theme_css(cfg["theme"])'), \
         "the config's palette must be added AFTER tt.css: same specificity, so " \
         "the later block is the only reason it wins"
+    assert code.index('os.environ.setdefault("NICEGUI_STORAGE_PATH"') < code.index("from nicegui import"), \
+        "NiceGUI resolves its storage path ONCE at import onto a class " \
+        "attribute, so this must precede every nicegui import - unset, theme, " \
+        "marks, scope and the seen-watermarks belong to the shell's PWD, and " \
+        "app.storage.path assigned later does nothing"
     assert 'port = cfg["server"]["port"] if port is None else port' in code, \
         "the config is the DEFAULT port; an explicit --port still wins"
     assert '"gls": "glossary" not in collapsed' in code and '"ok": "done" not in collapsed' in code, \
