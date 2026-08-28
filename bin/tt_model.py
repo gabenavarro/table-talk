@@ -540,7 +540,7 @@ def selftest():
     by_project = sort_groups(groups, "project")
     assert [g["project"] for g in by_project] == ["gcp-aws-xfer", "phephree", "table-talk"]
     assert [s["date"] for s in by_project[1]["sessions"]] == ["2026-08-26", "2026-08-25"], \
-        "children always read newest-first whatever the group order"
+        "project mode reorders the groups and leaves the children newest-first"
     assert sort_groups(groups, "nonsense") == by_recent, "an unknown sort falls back to recent"
 
     # In actions mode the sort reaches INSIDE a project: a quiet newer session
@@ -555,6 +555,16 @@ def selftest():
     for quiet in ("recent", "project", "nonsense"):
         assert [s["date"] for s in sort_groups(group_sessions(hot), quiet)[0]["sessions"]] \
             == ["2026-08-27", "2026-08-26"], f"{quiet} still reads newest-first"
+    # Equal open actions must fall back to RECENCY, not to the date string:
+    # group_sessions already emits recency order, so date and recency have to
+    # disagree here or a date tie-break is invisible.
+    tie = [("2026-08-27-y", _sess(2, 100)), ("2026-08-26-y", _sess(2, 900)),
+           ("2026-08-25-y", _sess(2, 500))]
+    assert [s["date"] for s in sort_groups(group_sessions(tie), "actions")[0]["sessions"]] \
+        == ["2026-08-26", "2026-08-25", "2026-08-27"], \
+        "equal open actions fall back to recency, so the order is total and " \
+        "cannot flap between polls"
+
     fresh = group_sessions(hot)
     sort_groups(fresh, "actions")
     assert [s["date"] for s in fresh[0]["sessions"]] == ["2026-08-27", "2026-08-26"], \
