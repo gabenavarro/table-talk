@@ -40,6 +40,10 @@ CSS_PATH = Path(__file__).resolve().parent / "tt.css"
 # outlives the render. main() replaces it; threading it through six row
 # signatures to reach one <button> buys nothing - the process has one config.
 CFG = tt_config.DEFAULTS
+# The link roots, resolved once in main(). The data dir, the CWD and the
+# config's extra_roots are all fixed for the life of the process, so resolving
+# them per rendered CELL was pure syscall overhead on the poll loop.
+ROOTS = None
 
 
 def load_css():
@@ -451,7 +455,12 @@ def link_spans(text):
     """
     urls = [(s, e, t, True) for s, e, t in M.url_spans(text)]
     taken = [(s, e) for s, e, _, _ in urls]
-    paths = [(s, e, t, False) for s, e, t in M.path_spans(text, link_roots(CFG))
+    # ROOTS, not link_roots(CFG): the roots are the data dir, the CWD and the
+    # config's extra_roots, none of which can change while the process runs,
+    # and rebuilding them per CELL cost a resolve() of each on every render.
+    # open_path still calls link_roots itself at click time - confinement is
+    # re-derived from the config there, never from anything cached here.
+    paths = [(s, e, t, False) for s, e, t in M.path_spans(text, ROOTS or link_roots(CFG))
              if not any(s < ue and us < e for us, ue in taken)]
     return sorted(urls + paths)
 
@@ -1210,6 +1219,10 @@ def selftest():
         "never reaches the DOM and click-to-scroll has nothing to find"
     assert 'btn.props["data-id"] = str(ev["id"])' in code, \
         "the id button's data-id prop must be ASSIGNED; COPY_JS reads it"
+    assert "ROOTS or link_roots(CFG)" in code and "ROOTS = link_roots(cfg)" in code, \
+        "the link roots are resolved ONCE per process, not per rendered cell: " \
+        "they cannot change while it runs, and open_path still re-derives " \
+        "confinement from the config at click time"
     assert 'btn.props["data-path"] = target' in code, \
         "the link button's target must be ASSIGNED too - a .props() string is parsed"
     assert 'cur.props["title"]' in code and "newest action waiting on you" in code, \
@@ -1381,8 +1394,9 @@ def main(port=None):
 
     # One dict, read where it is needed. A missing or malformed file yields the
     # defaults, so nothing below has to think about that.
-    global CFG
+    global CFG, ROOTS
     cfg = CFG = tt_config.load()
+    ROOTS = link_roots(cfg)
     port = cfg["server"]["port"] if port is None else port   # an explicit --port wins
     poll_seconds = cfg["server"]["poll_seconds"]
 

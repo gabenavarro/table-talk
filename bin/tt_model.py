@@ -408,7 +408,13 @@ def path_spans(text, roots):
     to resolve too - also accepted, since stripping it would break absolute
     Windows-style paths.
     """
-    if not text:
+    # A cell with no '/' cannot contain a match - _PATHISH REQUIRES a literal
+    # slash - so this returns before touching the filesystem at all. It is an
+    # equivalence, not a heuristic, and it is what keeps the render off the
+    # syscall path: three quarters of real cells are prose with no slash in
+    # them, and each one was paying a resolve() per root before the regex had
+    # matched anything.
+    if not text or "/" not in str(text):
         return []
     resolved_roots = []
     for r in roots or ():
@@ -741,6 +747,10 @@ def selftest():
         assert spans(f"({real})") == [str(real)], "surrounding punctuation is trimmed"
         assert spans(f"{real}.") == [str(real)], "a trailing sentence period is not part of the path"
         assert spans("no paths here at all") == []
+        assert spans("no slashes anywhere in this prose") == [], \
+            "a cell with no '/' cannot match _PATHISH, so it must never touch " \
+            "the filesystem: three quarters of real cells are slash-free prose " \
+            "and each was paying a resolve() per root on every render"
         assert spans("") == [] and spans(None) == []
         assert spans(str(root / "docs")) == [], "a directory must not be returned as linkable"
 
