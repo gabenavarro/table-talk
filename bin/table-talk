@@ -53,9 +53,27 @@ def session_file(project=None):
     return p
 
 
+def scrub(s):
+    """A value that is not valid UTF-8, made writable.
+
+    argv decodes bytes it cannot decode with surrogateescape, so a value piped
+    in from another tool - `table-talk progress $id "$(tail -1 train.log)"` -
+    can carry lone surrogates. stdlib json writes them without complaint, and
+    the dashboard then cannot render AT ALL: NiceGUI hard-requires orjson as
+    its socket serialiser and orjson refuses the whole payload, so one stray
+    byte in one field stops the page instead of spoiling one cell.
+
+    Escaped at the write boundary, where the damage is one token instead of one
+    product. backslashreplace rather than replace: `\\udcfe` still says WHICH
+    byte would not decode (0xfe), so the line stays diagnosable, where '?' and
+    U+FFFD both throw that away.
+    """
+    return s.encode("utf-8", "backslashreplace").decode("utf-8") if isinstance(s, str) else s
+
+
 def append(path, ev):
     with open(path, "a") as f:
-        f.write(json.dumps(ev) + "\n")
+        f.write(json.dumps({k: scrub(v) for k, v in ev.items()}) + "\n")
 
 
 def all_ids():
@@ -236,6 +254,15 @@ def selftest():
         i2 = add_term(f, "fva", "v2", "t2")
         assert i1 == i2, "term dedupe is case-insensitive"
         assert fold(f)[i1]["intuitive"] == "v2", "term re-add updates definitions"
+        # argv hands us lone surrogates for bytes it could not decode; written
+        # through, they stop the dashboard rendering at all (orjson refuses the
+        # payload, and NiceGUI requires orjson).
+        assert scrub("bad \udcff") == "bad \\udcff" and scrub(42) == 42, \
+            "the escape names the byte that would not decode; '?' would not"
+        i_bad = add_event("proj", {"type": "task", "status": "open", "what": "log \udcfe"})
+        got = fold(f)[i_bad]["what"]
+        assert got == "log \\udcfe", "a surrogate is escaped at the write boundary"
+        got.encode("utf-8")   # raises UnicodeEncodeError if one ever survives
         assert find_file_with_id("a1b2") == f
         assert find_file_with_id("ffff") is None
         i3 = add_event("proj", {"type": "task", "status": "open", "what": "x"})
