@@ -1792,8 +1792,10 @@ def main(port=None):
         elif what == "sort":
             cycle_sort()
         elif what == "needs-me":
-            # not a filter: it drops windows with NOTHING open, so it cannot
-            # hide an open action however hard you squint at it
+            # not a filter: it drops windows with no open ACTION, so it cannot
+            # hide an open action however hard you squint at it. A running job
+            # is deliberately not enough to keep a window - jobs report, actions
+            # ask - which is why the wall can empty with five jobs running.
             needs_me = not needs_me
             put("needs_me", needs_me)
             tick()

@@ -33,7 +33,7 @@ user can settle — not what you did, not how you got there.
 **After** — the ask, then the detail that survived the cut:
 
 > Subagent-driven or inline execution for the 14-task Multiplex plan? — plan is
-> up as PR #59 (closes #58); Tasks 8-12 are the risky ones.
+> up at https://github.com/gabenavarro/table-talk/pull/59; Tasks 8-12 are the risky ones.
 > **Why:** reviewing 14 finished commits costs far more than reviewing the plan
 > now, and the choice decides how much you see between tasks.
 > **Rec:** subagent-driven — a fresh agent and a review gate per task. Say "go"
@@ -189,7 +189,9 @@ drawer groups sessions under their project.
 
 Keys, most of them mirrored as statusline chips (`?` lists them): `\` drawer,
 `m` mark, `z` zoom, `f` fold, `s` sort (recent → actions → project), `/` filter,
-`!` needs-me (drop windows with nothing open), `Esc` unzoom.
+`!` needs-me (drop windows with no open ACTIONS — a running job is not
+something that needs you), `u` merge (one window per project, every row tagged
+with the session that recorded it), `Esc` unzoom.
 
 Filtering **dims** non-matching rows rather than hiding them, and highlights the
 match. Clicking an id copies the id itself, real paths open in the

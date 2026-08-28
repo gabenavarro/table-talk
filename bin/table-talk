@@ -418,8 +418,8 @@ def selftest():
         except SystemExit:
             pass
         assert "status" not in fold(f)[tid], "a rejected update must not touch the term"
-        d1 = add_diagram(f, "Pipeline", "flowchart LR\n  a --> b")
-        d2 = add_diagram(f, "pipeline", "flowchart LR\n  a --> c")
+        d1 = add_diagram(f, "Pipeline", "flowchart TD\n  a --> b")
+        d2 = add_diagram(f, "pipeline", "flowchart TD\n  a --> c")
         assert d1 == d2, "diagram dedupe is case-insensitive on the title"
         assert fold(f)[d1]["mermaid"].endswith("a --> c"), \
             "re-recording a title REPLACES the source: a diagram is iterated on"
@@ -476,6 +476,14 @@ def selftest():
     assert serve_refusal({"CLAUDE_CODE_SSE_PORT": "1"}, False) is None, \
         "the user's own VS Code terminal carries CLAUDE_CODE_* vars; only " \
         "CLAUDECODE itself marks a Claude session"
+    # This file MINUS this function: the needle would otherwise match its own
+    # assertion. Both halves matter - main() is defined AFTER selftest, and the
+    # help string lives there, so splitting only on "def selftest" would leave
+    # the very line this pin exists for outside the search.
+    src = Path(__file__).read_text()
+    code = src.split("def selftest():")[0] + src.split("\ndef main(", 1)[1]
+    assert "flowchart LR" not in code, \
+        "the CLI help must not offer the orientation the skill forbids"
     assert dashboard_url().startswith("http://127.0.0.1:") and dashboard_url().endswith("/")
     assert "9500" in serve_refusal({"CLAUDECODE": "1"}, False, url="http://127.0.0.1:9500/"), \
         "the refusal names the port the dashboard is ACTUALLY on: hardcoded, it " \
@@ -525,7 +533,7 @@ def main():
     tm.add_argument("--project")
 
     dg = sub.add_parser("diagram", help="record a mermaid diagram (the dashboard renders it)")
-    dg.add_argument("mermaid", help="mermaid source, e.g. $'flowchart LR\\n  a --> b'")
+    dg.add_argument("mermaid", help="mermaid source, e.g. $'flowchart TD\\n  a --> b'")
     dg.add_argument("--title", required=True)
     dg.add_argument("--project")
 
