@@ -87,7 +87,7 @@ two seconds.
 | `m` | mark the current window — marked windows pack first |
 | `z` | zoom it to fill the wall |
 | `f` | fold it down to its titlebar |
-| `s` | cycle the drawer sort: recent → actions → project |
+| `s` | cycle the drawer sort: recent → actions → project — `actions` ranks sessions inside a project too |
 | `/` | jump to the filter box |
 | `!` | needs-me: drop windows with nothing open |
 | `u` | merge: one window per project, every row tagged with its session |
