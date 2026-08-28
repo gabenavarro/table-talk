@@ -186,7 +186,7 @@ Keys, most of them mirrored as statusline chips (`?` lists them): `\` drawer,
 `!` needs-me (drop windows with nothing open), `Esc` unzoom.
 
 Filtering **dims** non-matching rows rather than hiding them, and highlights the
-match. Clicking an id copies `table-talk done <id>`, real paths open in the
+match. Clicking an id copies the id itself, real paths open in the
 configured command, and rows that moved since you last interacted keep a gutter.
 
 Config: `~/.config/table-talk/config.toml`, overridable with `TABLE_TALK_CONFIG`
