@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """table-talk: record actions, background tasks, technical terms, and mermaid
 diagrams for the table-talk reply protocol. Stdlib only — recording must never
-need the network. View: `table-talk serve` -> http://127.0.0.1:8731"""
+need the network. View: `table-talk serve`; `table-talk url` says where."""
 import argparse
 import fcntl
 import glob
@@ -220,7 +220,28 @@ def cmd_show(project, open_only=False, mine=False):
             print(json.dumps(e))
 
 
-def serve_refusal(env, force):
+DEFAULT_PORT = 8731
+
+
+def dashboard_url():
+    """Where the dashboard is, according to the same config the dashboard reads.
+
+    Imported lazily and tolerantly on purpose: tt_config needs tomllib, which is
+    3.11+, while this CLI is stdlib-only down to 3.10 - RECORDING must never
+    depend on being able to read the dashboard's config. Without this, a
+    configured server.port left every liveness check and every 'see the
+    dashboard' pointer aimed at 8731, so a session reported the dashboard down
+    while it was running and sent the user to a dead link.
+    """
+    try:
+        import tt_config
+        port = tt_config.load()["server"]["port"]
+    except ImportError:
+        port = DEFAULT_PORT
+    return f"http://127.0.0.1:{port}/"
+
+
+def serve_refusal(env, force, url=None):
     """Why serve must not start here, or None.
 
     serve never returns - it BECOMES the dashboard - so a Claude session that
@@ -234,7 +255,7 @@ def serve_refusal(env, force):
         return ("error: table-talk serve never exits, and this is a Claude Code "
                 "session - it would hang until the tool timeout.\n"
                 "check instead:  curl -sf -o /dev/null --max-time 2 "
-                "http://127.0.0.1:8731/ && echo up || echo down\n"
+                f"{url or dashboard_url()} && echo up || echo down\n"
                 "If it is down, ask the user to run `table-talk serve` in their "
                 "own terminal (or pass --force to insist).")
     return None
@@ -396,6 +417,10 @@ def selftest():
     assert serve_refusal({"CLAUDE_CODE_SSE_PORT": "1"}, False) is None, \
         "the user's own VS Code terminal carries CLAUDE_CODE_* vars; only " \
         "CLAUDECODE itself marks a Claude session"
+    assert dashboard_url().startswith("http://127.0.0.1:") and dashboard_url().endswith("/")
+    assert "9500" in serve_refusal({"CLAUDECODE": "1"}, False, url="http://127.0.0.1:9500/"), \
+        "the refusal names the port the dashboard is ACTUALLY on: hardcoded, it " \
+        "told every session to curl 8731 and report a running dashboard as down"
     msg = serve_refusal({"CLAUDECODE": "1"}, False)
     assert msg and "curl" in msg and "--force" in msg, \
         "the refusal must hand back the liveness check that actually works " \
@@ -452,6 +477,8 @@ def main():
     sh.add_argument("--mine", action="store_true",
                     help="only rows this session recorded (needs CLAUDE_CODE_SESSION_ID)")
 
+    sub.add_parser("url", help="print the dashboard's URL, per the config")
+
     sv = sub.add_parser("serve", help="launch the dashboard")
     sv.add_argument("--port", type=int, help="default: server.port from the config (8731)")
     sv.add_argument("--force", action="store_true",
@@ -480,6 +507,8 @@ def main():
         print(add_diagram(session_file(args.project), args.title, args.mermaid))
     elif args.cmd == "show":
         cmd_show(args.project, args.open, args.mine)
+    elif args.cmd == "url":
+        print(dashboard_url())
     elif args.cmd == "serve":
         cmd_serve(args.port, args.force)
     else:

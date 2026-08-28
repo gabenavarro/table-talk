@@ -22,7 +22,8 @@ the full cumulative glossary.
   `~/.local/share/table-talk/<date>-<project>.jsonl`. Current state is a
   shallow-merge fold by 4-hex id — append-only, safe for concurrent sessions.
 - **Dashboard** (`bin/table-talk-dash.py`, [NiceGUI](https://nicegui.io) via
-  `uv run`, PEP 723): `table-talk serve` → http://127.0.0.1:8731 — a tiled wall
+  `uv run`, PEP 723): `table-talk serve` → http://127.0.0.1:8731 by default,
+  and `table-talk url` prints it when you have configured another port — a tiled wall
   of sessions beside a project drawer, refreshed every 2 s. See
   [Dashboard](#dashboard).
 - **Skill** (`skill/SKILL.md`): tells Claude to record as it works and to end
