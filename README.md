@@ -1,7 +1,7 @@
 # table-talk
 
 [![License: MIT](https://img.shields.io/github/license/gabenavarro/table-talk)](LICENSE)
-[![Python ≥3.12](https://img.shields.io/badge/python-%E2%89%A53.12-blue)](https://www.python.org/)
+[![Python ≥3.10](https://img.shields.io/badge/python-%E2%89%A53.10-blue)](https://www.python.org/)
 [![PEP 723](https://img.shields.io/badge/PEP%20723-uv%20run-261230)](https://docs.astral.sh/uv/guides/scripts/)
 [![NiceGUI](https://img.shields.io/badge/NiceGUI-3.16-informational)](https://nicegui.io/)
 
@@ -30,8 +30,14 @@ the full cumulative glossary.
 
 ## Install
 
-Requires Python ≥3.12, [uv](https://docs.astral.sh/uv/) (dashboard only), and
-Claude Code (skill).
+The CLI needs Python ≥3.10 and nothing else — it is stdlib-only, so whatever
+your distro ships almost certainly works (Ubuntu 22.04 and Debian 12 included).
+
+The dashboard needs [uv](https://docs.astral.sh/uv/), which fetches its own
+interpreter from the script's PEP 723 header — your system Python is not
+involved. The skill needs Claude Code.
+
+Linux and macOS; on Windows use WSL (the CLI locks its log with `fcntl`).
 
     git clone https://github.com/gabenavarro/table-talk.git
     cd table-talk && ./install.sh
