@@ -114,7 +114,7 @@ two seconds.
 | `f` | fold it down to its titlebar |
 | `s` | cycle the drawer sort: recent → actions → project — `actions` ranks sessions inside a project too |
 | `/` | jump to the filter box |
-| `!` | needs-me: drop windows with nothing open |
+| `!` | needs-me: drop windows with no open **actions** (a running job is not something that needs you) |
 | `u` | merge: one window per project, every row tagged with its session |
 | `?` | the key list |
 | `Esc` | leave zoom |
