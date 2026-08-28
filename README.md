@@ -28,6 +28,24 @@ the full cumulative glossary.
 - **Skill** (`skill/SKILL.md`): tells Claude to record as it works and to end
   every reply with the tables, using ids you can reference back ("a3f9: option 2").
 
+## See it first
+
+The dashboard runs against any directory of logs, so you can look at a seeded
+one before installing anything but [uv](https://docs.astral.sh/uv/):
+
+    git clone https://github.com/gabenavarro/table-talk.git
+    cd table-talk
+    TABLE_TALK_DIR=docs/demo ./bin/table-talk serve      # http://127.0.0.1:8731
+
+Two projects, four sessions, live actions and jobs, a mermaid diagram and a
+glossary — enough to press `\`, `s`, `!` and `u` and see what they do.
+`TABLE_TALK_DIR` points the CLI and the dashboard at any data directory, which
+is also how you keep work logs separate:
+
+    TABLE_TALK_DIR=docs/demo ./bin/table-talk show --open
+
+(The demo is a frozen snapshot, so its ages count up from 27 Aug 2026.)
+
 ## Install
 
 The CLI needs Python ≥3.10 and nothing else — it is stdlib-only, so whatever
