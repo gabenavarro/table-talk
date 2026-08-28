@@ -100,6 +100,11 @@ is keyboard-only.
 
 ## Configuration
 
+UI state — theme, marks, folds, scope, sort and what you have already seen —
+lives beside the logs in `~/.local/share/table-talk/.ui/`, so it follows the
+data rather than the directory you launched from. (Before v5 it landed in a
+`.nicegui/` folder beside the launch directory; those are safe to delete.)
+
 `~/.config/table-talk/config.toml` (or point `TABLE_TALK_CONFIG` at another
 file) sets the port, poll interval, columns, drawer state, theme, and
 `links.open_command` — the command used to open a clicked file path in your
