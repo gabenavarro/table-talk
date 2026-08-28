@@ -1192,6 +1192,13 @@ def selftest():
     import ast
     src = Path(__file__).read_text()
     code = src.split("def selftest():")[0] + src.split("\ndef ago(", 1)[1]
+    assert "find_bar.set_visibility(drawer_open)" in code, \
+        "the collapsed drawer is a 54px rail and only the input can shrink, so " \
+        "it went to zero width: an input that is present, focusable and " \
+        "invisible silently dims the whole wall when you type into it"
+    assert code.index('elif what == "filter"') < code.index('put("drawer_open", True)'), \
+        "`/` must open the drawer before focusing: focusing a hidden box is the " \
+        "same trap by another route"
     assert "M.merge_projects" in code, \
         "the merged wall is the model's merge, not a second grouping in the UI"
     dyn = [n.lineno for n in ast.walk(ast.parse(src))
@@ -1476,7 +1483,8 @@ def main(port=None):
                 # The filter bar sits above the session tree, outside the container
                 # render_drawer() clears, and carries the N/M readout: under dim,
                 # "nothing matched" and "your match is 600 px below" look identical.
-                with ui.element("div").classes("dw-find"):
+                find_bar = ui.element("div").classes("dw-find")
+                with find_bar:
                     search = ui.input(placeholder="filter").props(
                         "clearable dense borderless").classes("dw-in")
                     # dict form, never the props STRING: see build_window
@@ -1759,7 +1767,14 @@ def main(port=None):
             if zoomed:
                 on_window_action(zoomed, "zoom")
         elif what == "filter":
-            ui.run_javascript('document.querySelector(".dw-find input")?.focus()')
+            # `/` must never focus a box that is not on screen: with the drawer
+            # collapsed the filter bar is hidden, so open it first and let the
+            # tick draw it before the focus lands.
+            if not store("drawer_open", cfg["ui"]["drawer_open"]):
+                put("drawer_open", True)
+                tick()
+            ui.run_javascript('requestAnimationFrame(() =>'
+                              ' document.querySelector(".dw-find input")?.focus())')
         elif what == "keys":
             keys_dlg.close() if keys_dlg.value else keys_dlg.open()
 
@@ -2043,6 +2058,12 @@ def main(port=None):
         if key != layout:
             layout = key
             shell.classes(replace="tt-main" if drawer_open else "tt-main tt-collapsed")
+            # The collapsed drawer is a 54px rail, and nothing in it can shrink
+            # except the input: the count and the theme toggle alone need ~121px,
+            # so the input went to zero width and the rest was clipped. An input
+            # that is present, focusable and invisible is the worst of the three
+            # states - typing into it silently dims the whole wall.
+            find_bar.set_visibility(drawer_open)
             # a folded window is a titlebar: costing it its full content weight
             # would leave the packer balancing around height that is not drawn
             repack(visible, cols,
