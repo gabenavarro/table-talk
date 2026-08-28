@@ -163,8 +163,13 @@ body{background:var(--bg);color:var(--ink);margin:0}
   border-bottom:1px solid var(--rule);font-size:11.5px}
 .win-t .nm{color:var(--ink);font-weight:700}
 .win-t .ix{color:var(--ink-3)}
-.bell{color:var(--act);font-weight:800;animation:bell 2.2s ease-in-out infinite}
-@keyframes bell{0%,100%{opacity:1}50%{opacity:.45}}
+/* steps(2,start), not ease-in-out: an opacity tween DWELLS near its trough, and
+   the trough was unreadable - .45 read 1.75:1 on .win-t and 1.62:1 on .win.cur's
+   tint (dark), 2.05:1 / 2.03:1 (light), all under the 3:1 floor the peak itself
+   is held to two lines up. reuses .cursor's own `blink` keyframes: the glyph is
+   now either its full peak contrast (unchanged - see :157-158) or ABSENT, never
+   a low-contrast smear, and never needs a keyframes block of its own. */
+.bell{color:var(--act);font-weight:800;animation:blink 2.2s steps(2,start) infinite}
 .actv{color:var(--job);font-weight:800}
 .fl-m{color:var(--caret);font-weight:800}
 .fl-z{color:var(--gls);font-weight:800}
@@ -201,8 +206,15 @@ body{background:var(--bg);color:var(--ink);margin:0}
 .win-b .row:hover{background:var(--hover)}
 .win-b .row.changed{border-left-color:var(--act)}
 .win-b .row.changed-job{border-left-color:var(--job)}
-/* the filter dims, it never hides — an open action is never removed from the wall */
-.tt-dim{opacity:.35}
+/* the filter dims, it never hides — an open action is never removed from the wall.
+   Measured against --surface, .35 put a dimmed row's own colours under the 3:1
+   floor the bell is held to (:157-158): title (--ink) 2.60:1/2.24:1 (dark/light),
+   the id (--act on .id-act) 1.57:1/1.75:1, sub-prose (--ink-2) 1.83:1/1.58:1 - a
+   filtered-out open action was reading at roughly watermark contrast. .78 clears
+   3:1 for every colour a dimmed row can show, worst case 3.01:1/3.08:1 (--ink-3,
+   both palettes); title reads 7.14:1/8.92:1, still visibly short of an undimmed
+   title's own 10.75:1/17.50:1, so dim and full-strength stay apart. */
+.tt-dim{opacity:.78}
 /* colour only - padding or weight changes advance width, re-wraps the
    paragraph, and destroys the zero-reflow property the dim treatment exists for */
 .tt-hit{background:var(--gls);color:var(--bg);border-radius:2px}
@@ -415,4 +427,5 @@ body{background:var(--bg);color:var(--ink);margin:0}
   *,*::before,*::after{animation-duration:.001ms !important;
     animation-iteration-count:1 !important;transition-duration:.001ms !important}
   .cursor{visibility:visible}
+  .bell{visibility:visible}
 }

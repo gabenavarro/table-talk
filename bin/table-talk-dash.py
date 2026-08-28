@@ -996,6 +996,11 @@ def selftest():
         "write: anything spliced around the id is not greppable, and a guard " \
         "after the write puts a hostile data-id on the clipboard anyway"
     assert ".tt-dim" in css and ".tt-hit" in css, "dim and highlight need styles to mean anything"
+    assert ".tt-dim{opacity:.78}" in css, \
+        "the dim opacity is measured against --surface: below .78 a filtered-out " \
+        "open action's own colours (title, id, sub-prose) drop under the 3:1 " \
+        "floor this sheet holds the bell to - on a laptop panel or in sunlight " \
+        "the filter becomes a hide in everything but name"
     assert ".dw-find" in css and ".tt-none" in css, "the filter bar and empty wall need styles"
     assert default_cols(2000) == 3 and default_cols(1400) == 2 and default_cols(800) == 1
     assert cols_for(700, 3) == 1 and cols_for(899, 3) == 1, \
@@ -1103,6 +1108,20 @@ def selftest():
         "--sel outright is ~2.9x the luminance the glyphs were chosen against " \
         "and drops the ! bell to 1.89:1, and target() marks a window .cur on the " \
         "very first paint, so nobody has to click anything to hit it"
+    bell = css.split(".bell{")[1].split("}")[0]
+    assert "steps(2,start)" in bell and "ease-in-out" not in bell, \
+        "an eased opacity tween DWELLS near its trough - the bell fell to " \
+        "1.62:1 on .win.cur and 1.75:1 on .win-t (dark) - so the blink must " \
+        "step between full contrast and gone, never pass through a low one"
+    assert "@keyframes bell{" not in css, \
+        "the bell reuses .cursor's own `blink` keyframes (to{visibility:hidden}) " \
+        "rather than a second, opacity-based one that reintroduces the dim trough"
+    rm = css.split("prefers-reduced-motion: reduce){")[1]
+    assert ".bell{visibility:visible}" in rm, \
+        "reduced motion truncates the animation to one .001ms iteration of " \
+        "steps(2,start), which can freeze on the HIDDEN step - without this " \
+        "override the one alert the dashboard exists to deliver can vanish " \
+        "for good on a screen that asked for less motion, not less signal"
 
     # links: the click handler hands a string that came out of a LOG FILE to a
     # process launcher, so both halves of that are pinned here.
