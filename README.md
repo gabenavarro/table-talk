@@ -120,8 +120,9 @@ two seconds.
 | `Esc` | leave zoom |
 
 Every key has a click equivalent — the statusline chips, the `M` `Z` `▾`
-buttons on each titlebar, and the filter box itself — so nothing on this page
-is keyboard-only.
+buttons on each titlebar, and the filter box itself — and every click has a
+keyboard equivalent: section headers and the drawer's fold triangle take Tab
+and Enter, so nothing on this page needs a pointer or a key alone.
 
 ## Configuration
 
