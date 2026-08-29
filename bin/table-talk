@@ -294,6 +294,83 @@ def update(id_, fields):
     append(f, {"id": id_, "ts": int(time.time()), **fields, **extra})
 
 
+SETTINGS_PATH = Path.home() / ".claude" / "settings.json"
+
+
+def hook_entry(command):
+    """The PostToolUse entry that runs `command` on every tool call."""
+    return {"matcher": "", "hooks": [{"type": "command", "command": command,
+                                      "timeout": 5}]}
+
+
+def edit_hooks(settings, command, remove=False):
+    """settings dict -> (new dict, what changed).
+
+    MERGE, never overwrite: this file holds the user's permissions, model
+    choice and plugins, and clobbering it would be far worse than the feature
+    is worth. Idempotent, so re-running the installer cannot accumulate
+    duplicates - identity is the command string, which is this checkout's own
+    absolute path, so two clones do not fight over one entry.
+    """
+    out = json.loads(json.dumps(settings))          # never mutate the caller's
+    events = out.setdefault("hooks", {})
+    entries = events.setdefault("PostToolUse", [])
+    has = [e for e in entries if any(h.get("command") == command
+                                     for h in (e.get("hooks") or []))]
+    if remove:
+        if not has:
+            return settings, "not installed"
+        events["PostToolUse"] = [e for e in entries if e not in has]
+        if not events["PostToolUse"]:
+            events.pop("PostToolUse")
+        if not events:
+            out.pop("hooks")
+        return out, "removed"
+    if has:
+        return settings, "already installed"
+    entries.append(hook_entry(command))
+    return out, "installed"
+
+
+def cmd_install_hook(remove=False, path=None):
+    """Add (or remove) the heartbeat hook in the user's Claude Code settings.
+
+    Backed up before the first change and written atomically, because an
+    interrupted write to this file would break every Claude Code session, not
+    just this tool.
+    """
+    p = Path(path) if path else SETTINGS_PATH
+    beat = str(Path(__file__).resolve().parent / "tt-beat")
+    try:
+        current = json.loads(p.read_text()) if p.exists() else {}
+    except (OSError, ValueError) as e:
+        sys.exit(f"error: cannot read {p}: {e}\nfix or move it, then re-run - "
+                 "this file is not something to overwrite blindly")
+    if not isinstance(current, dict):
+        sys.exit(f"error: {p} is not a JSON object; refusing to touch it")
+    new, what = edit_hooks(current, beat, remove)
+    if new is current:
+        print(f"heartbeat hook: {what}")
+        return
+    try:
+        p.parent.mkdir(parents=True, exist_ok=True)
+        if p.exists():
+            backup = p.with_suffix(".json.table-talk.bak")
+            if not backup.exists():
+                backup.write_text(p.read_text())
+                print(f"backed up your settings to {backup}")
+        tmp = p.with_suffix(".json.tt-tmp")
+        tmp.write_text(json.dumps(new, indent=2) + "\n")
+        os.replace(tmp, p)          # atomic: a half-written settings.json
+    except OSError as e:            # would break every Claude Code session
+        sys.exit(f"error: cannot write {p}: {e}")
+    print(f"heartbeat hook: {what} ({beat})")
+    if what == "installed":
+        print("it runs on every tool call in every project, exits 0 whatever "
+              "happens, and costs about 8 ms.\nremove it with: table-talk "
+              "install-hook --remove")
+
+
 def cmd_show(project, open_only=False, mine=False):
     """Dump folded state, one JSON object per line under a `== stem` header.
 
@@ -618,6 +695,74 @@ def selftest():
         "the refusal must hand back the liveness check that actually works " \
         "(pgrep -f 'table-talk serve' never matches: execv renames the process)"
     assert serve_refusal({"CLAUDECODE": "1"}, True) is None, "--force overrides"
+    # edit_hooks: this touches the user's ~/.claude/settings.json, which holds
+    # their permissions, model choice and plugins. Every pin here is about not
+    # destroying that file.
+    keep = {"model": "opus", "permissions": {"allow": ["Bash"]},
+            "hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": []}]}}
+    got, what = edit_hooks(keep, "/x/tt-beat")
+    assert what == "installed" and got["model"] == "opus" \
+        and got["permissions"] == {"allow": ["Bash"]} \
+        and got["hooks"]["PreToolUse"] == keep["hooks"]["PreToolUse"], \
+        "installing the hook must MERGE: a settings.json that lost the user's " \
+        "permissions or their other hooks is a far worse bug than no heartbeat"
+    assert keep["hooks"].get("PostToolUse") is None, \
+        "edit_hooks must not mutate the dict it was handed - the caller " \
+        "compares old to new to decide whether to write at all"
+    assert got["hooks"]["PostToolUse"][0]["hooks"][0]["command"] == "/x/tt-beat" \
+        and got["hooks"]["PostToolUse"][0]["hooks"][0]["type"] == "command" \
+        and got["hooks"]["PostToolUse"][0]["matcher"] == "", \
+        "the entry must match Claude Code's hook schema, or it is ignored " \
+        "silently and the wall never shows a heartbeat"
+    again, what = edit_hooks(got, "/x/tt-beat")
+    assert what == "already installed" and again is got, \
+        "re-running the installer must not stack duplicate hooks - every tool " \
+        "call would then pay for the beat twice"
+    other, what = edit_hooks(got, "/other/checkout/tt-beat")
+    assert what == "installed" and len(other["hooks"]["PostToolUse"]) == 2, \
+        "identity is the command path, so a second checkout installs its own"
+    gone, what = edit_hooks(got, "/x/tt-beat", remove=True)
+    assert what == "removed" and "PostToolUse" not in gone.get("hooks", {}) \
+        and gone["model"] == "opus", \
+        "--remove must take out only our entry and leave the rest of the file"
+    assert "hooks" in gone and "PreToolUse" in gone["hooks"], \
+        "removing our hook must not drop the user's OTHER hooks with it"
+    empty, what = edit_hooks({}, "/x/tt-beat", remove=True)
+    assert what == "not installed" and empty == {}, \
+        "removing what was never installed must leave the file untouched"
+    tidy, _ = edit_hooks(edit_hooks({}, "/x/tt-beat")[0], "/x/tt-beat", remove=True)
+    assert tidy == {}, "removal leaves no empty scaffolding behind"
+    # The write path itself, on a real file: a backup exists before the first
+    # change, and a second run neither duplicates nor re-backs-up.
+    with tempfile.TemporaryDirectory() as d:
+        sp = Path(d) / "settings.json"
+        sp.write_text(json.dumps({"model": "opus"}))
+        cmd_install_hook(path=sp)
+        first = json.loads(sp.read_text())
+        backup = sp.with_suffix(".json.table-talk.bak")
+        assert json.loads(backup.read_text()) == {"model": "opus"}, \
+            "the pre-existing settings must be recoverable: this is the file " \
+            "every Claude Code session reads, and we edit it during an install"
+        cmd_install_hook(path=sp)
+        assert json.loads(sp.read_text()) == first, "the second run is a no-op"
+        assert not list(Path(d).glob("*tt-tmp")), \
+            "the atomic temp file must not survive: a half-written " \
+            "settings.json breaks every Claude Code session, not just this tool"
+        # --remove is a REAL write, so it is what proves the backup is taken
+        # once and never again; a no-op re-run would not exercise this at all.
+        backup.write_text('{"marker": 1}')
+        cmd_install_hook(remove=True, path=sp)
+        assert json.loads(sp.read_text()) == {"model": "opus"}, \
+            "--remove must return the file to what it was"
+        assert json.loads(backup.read_text()) == {"marker": 1}, \
+            "a later run must not overwrite the backup with hooked settings - " \
+            "that would destroy the only copy of the user's original"
+    # The user's actual question: the hook must be part of `./install.sh`, not a
+    # README paragraph they have to notice.
+    setup = (Path(__file__).resolve().parent.parent / "install.sh").read_text()
+    assert '"$here/bin/table-talk" install-hook' in setup, \
+        "install.sh must set the heartbeat hook up; left as a manual step, the " \
+        "one feature that shows whether an agent is working is off for everyone"
     print("ok")
 
 
@@ -673,6 +818,10 @@ def main():
 
     sub.add_parser("url", help="print the dashboard's URL, per the config")
 
+    ih = sub.add_parser("install-hook",
+                        help="add the heartbeat hook to ~/.claude/settings.json")
+    ih.add_argument("--remove", action="store_true", help="take it out again")
+
     sv = sub.add_parser("serve", help="launch the dashboard")
     sv.add_argument("--port", type=int, help="default: server.port from the config (8731)")
     sv.add_argument("--force", action="store_true",
@@ -698,6 +847,8 @@ def main():
         print(add_diagram(session_file(args.project), args.title, args.mermaid))
     elif args.cmd == "show":
         cmd_show(args.project, args.open, args.mine)
+    elif args.cmd == "install-hook":
+        cmd_install_hook(args.remove)
     elif args.cmd == "url":
         print(dashboard_url())
     elif args.cmd == "serve":
