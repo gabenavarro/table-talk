@@ -472,6 +472,30 @@ def link_spans(text):
     return sorted(urls + paths)
 
 
+def ensure_config(path=None, example=None):
+    """The config file, created from the documented example if it is missing.
+
+    A normal install has no config at all - the loader falls back to DEFAULTS -
+    so a settings button that just opened the path would open nothing, which is
+    the exact failure it exists to remove. The example is copied rather than the
+    defaults dumped: it carries a comment per key saying what the key does, and
+    a file of bare values teaches nobody anything.
+
+    Returns the path, or None if it could not be created (a read-only home is
+    not a reason to break the drawer).
+    """
+    path = Path(path) if path else tt_config.CONFIG_PATH
+    example = Path(example) if example else CSS_PATH.parent.parent / "docs" / "config.example.toml"
+    try:
+        if not path.exists():
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(example.read_text() if example.is_file() else "")
+        return path
+    except OSError as e:
+        print(f"table-talk: could not create {path}: {e}", file=sys.stderr)
+        return None
+
+
 def nearest_claude_md(start, home):
     """The closest CLAUDE.md found walking up from `start`, or None.
 
@@ -1203,6 +1227,31 @@ def selftest():
     assert ".lk-p" in css and ".lk{" in css, \
         "a link run needs its styles, and the inline rule is what keeps a cell one sentence"
 
+    # ensure_config: the settings entry must have a file to open. A normal
+    # install has none - the loader falls back to DEFAULTS - so opening the
+    # path would do nothing at all, which is the failure it exists to remove.
+    with tempfile.TemporaryDirectory() as td:
+        cfgp = Path(td) / "sub" / "config.toml"
+        ex = Path(td) / "example.toml"
+        ex.write_text('# documented example\n[server]\nport = 8731\n')
+        assert ensure_config(cfgp, ex) == cfgp and cfgp.is_file(), \
+            "a missing config is CREATED, parent directories and all"
+        assert "# documented example" in cfgp.read_text(), \
+            "seeded from the example, not from bare defaults: the comments are " \
+            "what teach the keys, and a file of values teaches nobody anything"
+        cfgp.write_text("[ui]\nview = \"flat\"\n")
+        assert ensure_config(cfgp, ex) == cfgp and "flat" in cfgp.read_text(), \
+            "an EXISTING config is never overwritten"
+        assert ensure_config(Path(td) / "c2.toml", Path(td) / "missing.toml").is_file(), \
+            "a missing example still yields a file to open, just an empty one"
+        ro = Path(td) / "ro"
+        ro.mkdir(); ro.chmod(0o500)
+        try:
+            assert ensure_config(ro / "x" / "c.toml", ex) is None, \
+                "a read-only home returns None; it must not break the drawer"
+        finally:
+            ro.chmod(0o700)
+
     # nearest_claude_md: the drawer-footer discovery helper
     with tempfile.TemporaryDirectory() as td:
         above = Path(td)
@@ -1328,6 +1377,9 @@ def selftest():
         "one hardcoded False left the wall starting flat however the file was " \
         "written, and the three sites must agree or the first poll disagrees " \
         "with the toggle"
+    assert 'ctx.append(("settings", cfg_path))' in code, \
+        "every setting the wall obeys lives in a file the user had no way to " \
+        "reach from the dashboard, and that a normal install does not even have"
     assert 'port = cfg["server"]["port"] if port is None else port' in code, \
         "the config is the DEFAULT port; an explicit --port still wins"
     assert '"gls": "glossary" not in collapsed' in code and '"ok": "done" not in collapsed' in code, \
@@ -1594,6 +1646,10 @@ def main(port=None):
                             str(Path.cwd()).replace("/", "-") / "memory" / "MEMORY.md")
                 if mem_file.is_file():
                     ctx.append(("memory", mem_file))
+                # Settings last: it is the one entry that is always present,
+                # because unlike the others it CREATES its file when missing.
+                if (cfg_path := ensure_config()):
+                    ctx.append(("settings", cfg_path))
                 if ctx:
                     with ui.element("div").classes("dw-ctx"):
                         for label, p in ctx:
