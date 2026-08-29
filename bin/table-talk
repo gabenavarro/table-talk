@@ -233,6 +233,32 @@ def blocker(action_id, state_of):
     return action_id
 
 
+def stale_hundreds(states, skip_id=None):
+    """Ids of tasks that say they are finished but were never closed.
+
+    `done` is run by the session and by nothing else, so a task at 100% that is
+    still open is the one shape of protocol drift the data can see by itself.
+    Three exclusions keep it honest rather than noisy:
+
+    - the literal `pct` field only, never tt_model's scrape, which reads any
+      percentage in the prose and once turned "92% of 5039 genes above zero"
+      into a 92% bar on work that had barely started;
+    - never the id this invocation just wrote, or `progress --pct 100` would
+      warn about itself every time and the warning would train its own reader
+      to skip it;
+    - never a task blocked on a still-open action, which is a legitimately
+      open task at 100% waiting on the user.
+    """
+    blocking = {i for i, e in states.items()
+                if e.get("type") == "action" and e.get("status") != "done"}
+    return sorted(
+        i for i, e in states.items()
+        if i != skip_id
+        and e.get("type") == "task" and e.get("status") != "done"
+        and isinstance(e.get("pct"), int) and e.get("pct") == 100
+        and e.get("blocked_on") not in blocking)
+
+
 def _lookup(id_):
     """The folded event for an id, anywhere in the data dir, or {}."""
     f = find_file_with_id(id_)
@@ -652,6 +678,52 @@ def selftest():
             raise AssertionError(f"blocker({bad!r}) must refuse: {why}")
         except SystemExit:
             pass
+
+    # stale_hundreds: a task that says it is finished but was never closed.
+    open_act = {"type": "action", "status": "open"}
+    st = {"aaaa": {"id": "aaaa", "type": "task", "status": "open", "pct": 100},
+          "bbbb": {"id": "bbbb", "type": "task", "status": "open", "pct": 60},
+          "cccc": {"id": "cccc", "type": "task", "status": "done", "pct": 100},
+          "dddd": {"id": "dddd", "type": "action", "status": "open", "pct": 100},
+          "eeee": open_act}
+    assert stale_hundreds(st) == ["aaaa"], \
+        "only an OPEN TASK at an explicit 100 is stale: a finished one is " \
+        "closed, a partial one is running, and an action has no percentage"
+    assert stale_hundreds(st, skip_id="aaaa") == [], \
+        "`progress <id> --pct 100` must not warn about the very id it just " \
+        "wrote - it would fire on every single completion, and a warning " \
+        "that always fires is one nobody reads"
+    st["aaaa"]["blocked_on"] = "eeee"
+    assert stale_hundreds(st) == [], \
+        "a task blocked on a still-open action is legitimately open at 100%: " \
+        "this is exactly f389 awaiting a merge decision, and warning about it " \
+        "would teach the session to ignore the warning"
+    st["eeee"] = {"type": "action", "status": "done"}
+    assert stale_hundreds(st) == ["aaaa"], \
+        "once the blocking action is answered the task is stale again - a " \
+        "stale blocker must not hide it forever"
+    st["aaaa"]["pct"] = "100"
+    assert stale_hundreds(st) == [], \
+        "pct is compared as a number, so a string cannot count as complete"
+    st["aaaa"]["pct"] = 100.0
+    assert stale_hundreds(st) == [], \
+        "pct must be a literal int - a float that equals 100 must not count " \
+        "as complete either, or a stray float reading would trip the warning"
+    st["aaaa"]["pct"] = 100
+    st["ffff"] = {"id": "ffff", "type": "task", "status": "open", "pct": 100}
+    assert stale_hundreds(st) == ["aaaa", "ffff"], "ids come back sorted"
+    # inserted BEFORE "aaaa" alphabetically but AFTER it in dict insertion
+    # order, so this is the entry that actually distinguishes sorted() from
+    # insertion order - without it, this dict's own key order happens to
+    # already read alphabetically and the pin above would pass by luck.
+    st["0001"] = {"id": "0001", "type": "task", "status": "open", "pct": 100}
+    assert stale_hundreds(st) == ["0001", "aaaa", "ffff"], \
+        "the wall must not reorder itself between reads: unsorted ids would " \
+        "make every render of the same state look like a different list"
+    assert stale_hundreds({"gggg": {"type": "task", "status": "open",
+                                    "progress": "92% of 5039 genes above zero"}}) == [], \
+        "staleness reads the literal pct field and NEVER scrapes prose: the " \
+        "scrape already turned that exact sentence - a RESULT - into a 92% bar"
 
     # progress_fields: the reading's clock must not move when no reading was
     # taken. This is the whole reason the field exists.
