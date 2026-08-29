@@ -259,6 +259,28 @@ def stale_hundreds(states, skip_id=None):
         and e.get("blocked_on") not in blocking)
 
 
+def warn_stale(project, skip_id=None):
+    """Nudge about tasks left open at 100%, on stderr, never fatally.
+
+    Runs after every recording command because those are what a session
+    actually runs; a check that only fires inside `show --open` would depend on
+    the same sweep that already failed. Costs one fold of the project's files -
+    1.0 ms across five of them - and swallows everything, because a warning
+    that could break `table-talk done` would be worse than no warning at all.
+    """
+    try:
+        states = {}
+        for path in sorted(DATA_DIR.glob(f"*-{glob.escape(project)}.jsonl")):
+            states.update(fold(path))
+        ids = stale_hundreds(states, skip_id)
+    except Exception:               # a nudge must never break a recording
+        return
+    if ids:
+        print(f"note: {', '.join(ids)} at 100% and still open — `table-talk "
+              f"done <id>`, or `progress <id> --blocked-on <action-id>` if it "
+              f"is waiting on the user", file=sys.stderr)
+
+
 def _lookup(id_):
     """The folded event for an id, anywhere in the data dir, or {}."""
     f = find_file_with_id(id_)
@@ -484,7 +506,7 @@ def cmd_serve(port, force=False):
 
 
 def selftest():
-    import tempfile
+    import tempfile, io, contextlib
     global DATA_DIR
     with tempfile.TemporaryDirectory() as td:
         DATA_DIR = Path(td)
@@ -521,7 +543,6 @@ def selftest():
         # cmd_show's filters: one log file is one date+project and SEVERAL
         # sessions share it, so an unfiltered dump makes a session claim asks it
         # never made. Captured rather than eyeballed - the skill runs this.
-        import io, contextlib
         os.environ["CLAUDE_CODE_SESSION_ID"] = "aaaa-x"
         try:
             mine_open = add_event("shw", {"type": "action", "status": "open",
@@ -725,6 +746,39 @@ def selftest():
         "staleness reads the literal pct field and NEVER scrapes prose: the " \
         "scrape already turned that exact sentence - a RESULT - into a 92% bar"
 
+    # warn_stale: the nudge itself, on the real file layout.
+    with tempfile.TemporaryDirectory() as td:
+        keep, DATA_DIR = DATA_DIR, Path(td)
+        try:
+            f = DATA_DIR / "2026-01-01-proj.jsonl"
+            f.write_text(json.dumps({"id": "aaaa", "type": "task",
+                                     "status": "open", "pct": 100}) + "\n")
+            err = io.StringIO()
+            with contextlib.redirect_stderr(err):
+                warn_stale("proj")
+            assert "aaaa" in err.getvalue(), \
+                "the warning must NAME the stale id: a nudge the reader has " \
+                "to go hunting for is one they will not act on"
+            err = io.StringIO()
+            with contextlib.redirect_stderr(err):
+                warn_stale("proj", skip_id="aaaa")
+            assert err.getvalue() == "", "the id just written is never named"
+            err = io.StringIO()
+            with contextlib.redirect_stderr(err):
+                warn_stale("nonesuch")
+            assert err.getvalue() == "", \
+                "a project with nothing stale must print NOTHING - a warning " \
+                "that appears on every clean run is noise, not a signal"
+            (DATA_DIR / "unreadable.jsonl").write_text("{ not json\n")
+            err = io.StringIO()
+            with contextlib.redirect_stderr(err):
+                warn_stale("proj")
+            assert "aaaa" in err.getvalue(), \
+                "one corrupt file must not silence the check for the rest: " \
+                "recording is what must never break, and this is only a nudge"
+        finally:
+            DATA_DIR = keep
+
     # progress_fields: the reading's clock must not move when no reading was
     # taken. This is the whole reason the field exists.
     assert "read_ts" in progress_fields(NS(text="epoch 3/10", pct=None, intuitive=None, diagram=None))
@@ -761,6 +815,9 @@ def selftest():
     code = src.split("def selftest():")[0] + src.split("\ndef main(", 1)[1]
     assert "flowchart LR" not in code, \
         "the CLI help must not offer the orientation the skill forbids"
+    assert "warn_stale(getattr(args, \"project\", None)" in code, \
+        "the nudge must fire from main() after a recording command: defined " \
+        "and never called, it catches exactly nothing"
     assert dashboard_url().startswith("http://127.0.0.1:") and dashboard_url().endswith("/")
     assert "9500" in serve_refusal({"CLAUDECODE": "1"}, False, url="http://127.0.0.1:9500/"), \
         "the refusal names the port the dashboard is ACTUALLY on: hardcoded, it " \
@@ -935,6 +992,10 @@ def main():
         cmd_serve(args.port, args.force)
     else:
         p.print_help()
+
+    if args.cmd in ("action", "task", "progress", "done", "term", "diagram"):
+        warn_stale(getattr(args, "project", None) or Path.cwd().name,
+                   getattr(args, "id", None))
 
 
 if __name__ == "__main__":
