@@ -125,6 +125,13 @@ scales down until its labels are unreadable.
 **🔴 Actions needed from you**
 | ID | What I need | Why it matters | Recommendation |
 
+Every row carries an id the CLI printed. An ask you are about to write with no
+id is an ask you have not recorded — record it first, or the user cannot answer
+it, `done` cannot close it, and the dashboard never shows it at all. And an
+action the user has just answered is `done` in the SAME breath as acting on it,
+before the reply is written: an answered row still open on the wall is the same
+divergence seen from the other side.
+
 Every action still open **in this project**, not just the ones recorded this
 reply. An action stays in this table until it is `done`, however many replies
 that takes — the dashboard keeps showing it, and a table that quietly drops it
@@ -142,6 +149,13 @@ wall, and claiming it asks the user to answer someone else's question.
 
 **🔵 Background work**
 | ID | What | Progress |
+
+An open task is a COMMITMENT TO CONTINUE, not a status label. While one is open
+the next reply carries it further, and ending a turn to ask which queued item to
+start is a protocol break when an open task already answers that. The two tables
+exist to draw exactly one distinction: 🔴 needs the user, 🔵 is running. Stop for
+a 🔴 and for nothing else — if a decision is genuinely needed, record the action,
+say so, and leave the task open.
 
 A task is closed by YOU, and nothing else will ever close it. An action ends
 when the user answers it by id; a job ends when its work lands, and no one is
