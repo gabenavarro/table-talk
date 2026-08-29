@@ -365,6 +365,9 @@ def cmd_install_hook(remove=False, path=None):
     except OSError as e:            # would break every Claude Code session
         sys.exit(f"error: cannot write {p}: {e}")
     print(f"heartbeat hook: {what} ({beat})")
+    if what == "installed" and not shutil.which("jq"):
+        print("warning: jq is not installed, so the hook will do nothing "
+              "silently - install jq to get heartbeats", file=sys.stderr)
     if what == "installed":
         print("it runs on every tool call in every project, exits 0 whatever "
               "happens, and costs about 8 ms.\nremove it with: table-talk "
@@ -757,6 +760,11 @@ def selftest():
         assert json.loads(backup.read_text()) == {"marker": 1}, \
             "a later run must not overwrite the backup with hooked settings - " \
             "that would destroy the only copy of the user's original"
+    assert 'jq -r' in (Path(__file__).resolve().parent / "tt-beat").read_text() \
+        and 'shutil.which("jq")' in code, \
+        "tt-beat parses its payload with jq, so installing the hook on a box " \
+        "without jq must warn: otherwise it no-ops silently and the wall just " \
+        "never shows a heartbeat, with nothing anywhere saying why"
     # The user's actual question: the hook must be part of `./install.sh`, not a
     # README paragraph they have to notice.
     setup = (Path(__file__).resolve().parent.parent / "install.sh").read_text()
