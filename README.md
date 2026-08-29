@@ -142,18 +142,14 @@ of the session id — the same `sid` the CLI stamps on every event — and touch
 a file. A window whose session called a tool in the last two minutes shows a
 `◉` in its titlebar.
 
-Add to `~/.claude/settings.json` (needs `jq`):
+`./install.sh` sets it up for you. It merges the hook into
+`~/.claude/settings.json`, keeping everything already there and backing the
+file up first, and re-running it changes nothing. To skip it — the hook fires
+in *every* project, not only this one — install with `./install.sh --no-hook`.
 
-```json
-{
-  "hooks": {
-    "PostToolUse": [
-      { "matcher": "", "hooks": [
-        { "type": "command", "command": "/absolute/path/to/table-talk/bin/tt-beat", "timeout": 5 }
-      ] }
-    ]
-  }
-}
+```sh
+table-talk install-hook            # add it later, or after --no-hook
+table-talk install-hook --remove   # take it out again
 ```
 
 Without it nothing changes: no directory, no heartbeats, no markers. The hook
