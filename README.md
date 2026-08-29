@@ -136,7 +136,10 @@ data rather than the directory you launched from. (Before v5 it landed in a
 
 The drawer's footer has a **settings** entry that opens this file in your
 `links.open_command`, creating it from the documented example the first time —
-a fresh install has no config at all and runs on the defaults below.
+a fresh install has no config at all and runs on the defaults below. Change `server.port`
+there and the statusline offers to restart onto it — after checking the port is
+actually free, so it can never exec into a port something else already holds.
+Starting with `--port` opts out: a flag you typed beats the file.
 
 `~/.config/table-talk/config.toml` (or point `TABLE_TALK_CONFIG` at another
 file) sets the port, poll interval, columns, drawer state, theme, and

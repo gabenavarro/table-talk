@@ -390,6 +390,9 @@ body{background:var(--bg);color:var(--ink);margin:0}
 .sl-s.on .spin{color:var(--ok)}
 .sl-stale{color:var(--act)}
 .sl-scope{color:var(--caret)}
+/* the config and the running server disagree - the one statusline segment
+   that appears only when something needs doing */
+.sl-port{color:var(--act-2)}
 /* the one segment allowed to give up room: at a narrow width the hints truncate
    so the tally, the cadence and the clock all survive */
 .sl-k{flex-shrink:1;min-width:0;overflow:hidden;gap:0}
