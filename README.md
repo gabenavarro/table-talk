@@ -91,7 +91,8 @@ two seconds.
   `Z` zoomed, `*` current — over sections for actions, jobs, diagrams,
   glossary and done, and a footer tallying what is resolved. Every section
   collapses, and a shut one keeps a █/░ bar reporting what it holds. Progress
-  text is read for a percentage and drawn as a bar; an attached `--diagram`
+  text is read for a percentage and drawn as a bar, which pulses for five
+  minutes after a reading was taken and is still after that; an attached `--diagram`
   sketch draws centered under its item in the theme's inks;
   a coloured gutter marks whatever moved since you last looked. Click any id
   to copy `SESSION: <session> - ID: <id>` — or the bare id when the

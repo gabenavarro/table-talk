@@ -480,6 +480,31 @@ def link_spans(text):
     return sorted(urls + paths)
 
 
+# How long after a reading a bar keeps pulsing. Five minutes: long enough to
+# cover the gap between a session's steps, short enough that a job nobody has
+# touched since lunch is visibly still.
+LIVE_WINDOW = 300
+
+
+def live_delay(read_ts, now, window=LIVE_WINDOW):
+    """A NEGATIVE animation-delay in seconds, or None when the reading is stale.
+
+    A row repaints only when its own data changes, so a class set at render
+    time freezes: a bar marked live at 10:00 would still claim to be live at
+    10:30 without a single repaint - the same lie the relative-age label was
+    rejected for. Instead the animation runs for exactly `window` seconds and
+    is started PARTWAY THROUGH, offset by the reading's age, so it finishes on
+    its own at the right moment and needs nobody to come back and stop it.
+
+    This says a reading was taken recently. It does NOT say an agent is working
+    now - nothing in a log can say that; see the heartbeat half of #173.
+    """
+    if not isinstance(read_ts, (int, float)) or isinstance(read_ts, bool):
+        return None
+    age = now - read_ts
+    return round(age, 1) if 0 <= age < window else None
+
+
 def port_free(port, bind=None):
     """Whether the dashboard could actually take `port` right now.
 
@@ -644,7 +669,13 @@ def _task_row(ev, query, changed, blocked=None):
                             ui.label("▓")
                 else:
                     filled, empty = blocks(pct)
-                    with ui.element("div").classes("blocks"):
+                    bar = ui.element("div").classes("blocks")
+                    # Started partway through by its age, so it stops on its own
+                    # when the reading goes stale - see live_delay.
+                    if (delay := live_delay(ev.get("read_ts") or ev.get("ts"),
+                                            time.time())) is not None:
+                        bar.classes("live").style(f"animation-delay:-{delay}s")
+                    with bar:
                         ui.label(filled)
                         ui.label(empty).classes("e")
                     ui.label(f"{pct}%").classes("pct")
@@ -1281,6 +1312,20 @@ def selftest():
     assert ".lk-p" in css and ".lk{" in css, \
         "a link run needs its styles, and the inline rule is what keeps a cell one sentence"
 
+    # live_delay: the pulse's own lifetime encodes the freshness window, because
+    # a row repaints only when its data changes - a class set at render time
+    # would still claim to be live half an hour later without a repaint.
+    assert live_delay(1000, 1000) == 0, "a reading just taken starts the pulse at 0"
+    assert live_delay(1000, 1120) == 120.0, "an older reading starts partway through"
+    assert live_delay(1000, 1000 + LIVE_WINDOW) is None, \
+        "at the window's edge the pulse is over, and the bar is simply still"
+    assert live_delay(1000, 9999) is None
+    assert live_delay(1000, 900) is None, \
+        "a reading stamped in the FUTURE (a clock jump) must not pulse forever"
+    for junk in (None, "1000", True, [1]):
+        assert live_delay(junk, 1000) is None, f"{junk!r} is not a reading"
+    assert LIVE_WINDOW == 300
+
     # port_free / restart_offer: a self-restart onto a taken port does not move
     # the dashboard, it ends it, so the check is a real bind.
     import socket as _sock
@@ -1458,6 +1503,18 @@ def selftest():
         "one hardcoded False left the wall starting flat however the file was " \
         "written, and the three sites must agree or the first poll disagrees " \
         "with the toggle"
+    live = css.split(".blocks.live{")[1].split("}")[0]
+    dur, _, iters = live.split("animation:live ")[1].partition(" ease-in-out ")
+    assert float(dur.rstrip("s")) * int(iters) == LIVE_WINDOW, \
+        "the animation's own lifetime IS the freshness window - a row repaints " \
+        "only when its data changes, so a pulse that outlived the window would " \
+        "keep claiming live with nobody left to switch it off"
+    assert "animation-delay:-" in code, \
+        "the pulse starts partway through, offset by the reading's age, or " \
+        "every repaint would restart a stale bar's animation from the top"
+    assert ".blocks.live{opacity:1}" in css.split("prefers-reduced-motion: reduce){")[1], \
+        "reduced motion truncates the animation to one .001ms iteration, which " \
+        "can land on the dim keyframe and leave the bar permanently faded"
     assert "if not port_free(want):" in code and code.index("if not port_free(want):") < code.index("os.execv(sys.executable"), \
         "the new port is proven free BEFORE the exec: an exec onto a taken " \
         "port does not move the dashboard, it ends it - the process replaces " \
