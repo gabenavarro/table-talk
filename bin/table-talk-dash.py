@@ -612,9 +612,19 @@ def ensure_config(path=None, example=None):
     path = Path(path) if path else tt_config.CONFIG_PATH
     example = Path(example) if example else CSS_PATH.parent.parent / "docs" / "config.example.toml"
     try:
+        path.parent.mkdir(parents=True, exist_ok=True)
         if not path.exists():
-            path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(example.read_text() if example.is_file() else "")
+        elif example.is_file():
+            # The user's own file is NEVER rewritten - it holds their values and
+            # their comments. But it was copied from whatever the example said
+            # the day it was created, so every option added since is invisible
+            # in it: a config made before the themes shipped has no dark_theme
+            # line and no list of theme names. Keep a current copy beside it.
+            ref = path.parent / "config.example.toml"
+            new = example.read_text()
+            if not ref.is_file() or ref.read_text() != new:
+                ref.write_text(new)
         return path
     except OSError as e:
         print(f"table-talk: could not create {path}: {e}", file=sys.stderr)
@@ -1643,6 +1653,32 @@ def selftest():
     assert 'ctx.append(("settings", cfg_path))' in code, \
         "every setting the wall obeys lives in a file the user had no way to " \
         "reach from the dashboard, and that a normal install does not even have"
+    assert 'ui.run(host=host,' in code and 'host = cfg["server"]["host"]' in code, \
+        "the configured host must reach the BIND: hardcoded, the option is " \
+        "documented, validated, and does absolutely nothing"
+    assert 'if host != "127.0.0.1":' in code and "no password" in code, \
+        "binding beyond localhost must SAY so where it happens - this page " \
+        "has no login, and the user is trusting a config line they wrote once"
+    assert 'ctx.append(("settings ref", ref))' in code, \
+        "the drawer must offer the CURRENT documented example: a user's own " \
+        "config froze on the day it was created, so every option added since " \
+        "- the 15 themes, this host key - is invisible in the only file the " \
+        "settings button opens"
+    with tempfile.TemporaryDirectory() as td:
+        cfgp, exp = Path(td) / "config.toml", Path(td) / "example.toml"
+        exp.write_text("# v2 example\nhost = \"127.0.0.1\"\n")
+        cfgp.write_text("# MY file, MY comments\nport = 9999\n")
+        assert ensure_config(cfgp, exp) == cfgp
+        assert cfgp.read_text() == "# MY file, MY comments\nport = 9999\n", \
+            "the user's own config is NEVER rewritten: it holds their values " \
+            "and their comments, and merging keys into it risks both"
+        ref = Path(td) / "config.example.toml"
+        assert ref.read_text() == exp.read_text(), \
+            "but the reference beside it must be refreshed, or it goes stale " \
+            "exactly the way the config it exists to explain already did"
+        exp.write_text("# v3 example\n")
+        ensure_config(cfgp, exp)
+        assert ref.read_text() == "# v3 example\n", "and re-refreshed on change"
     assert 'port = cfg["server"]["port"] if port is None else port' in code, \
         "the config is the DEFAULT port; an explicit --port still wins"
     assert '"gls": "glossary" not in collapsed' in code and '"ok": "done" not in collapsed' in code, \
@@ -1787,6 +1823,14 @@ def main(port=None):
     explicit_port = port is not None      # --port beats the config, and keeps beating it
     port = cfg["server"]["port"] if port is None else port   # an explicit --port wins
     poll_seconds = cfg["server"]["poll_seconds"]
+    host = cfg["server"]["host"]
+    if host != "127.0.0.1":
+        # Say it plainly, at the moment it takes effect. There is no login on
+        # this page: anyone who can reach the port reads the work log, the
+        # project names and the file paths.
+        print(f"table-talk: serving on {host}:{port} - reachable by ANY device "
+              f"on your network, and this dashboard has no password.",
+              file=sys.stderr)
 
     ui.add_head_html(f"<style>{load_css()}</style>")
     if (over := theme_css(cfg["theme"])):     # AFTER tt.css, or it overrides nothing
@@ -1915,6 +1959,11 @@ def main(port=None):
                 # because unlike the others it CREATES its file when missing.
                 if (cfg_path := ensure_config()):
                     ctx.append(("settings", cfg_path))
+                    # The current documented example, refreshed on every start.
+                    # Without it the only reference a user has is their own
+                    # file, which froze on the day it was created.
+                    if (ref := cfg_path.parent / "config.example.toml").is_file():
+                        ctx.append(("settings ref", ref))
                 if ctx:
                     with ui.element("div").classes("dw-ctx"):
                         for label, p in ctx:
@@ -2667,7 +2716,7 @@ def main(port=None):
     tick()
     # fold_cached re-parses only changed files; steady-state tick is O(files stat)
     ui.timer(poll_seconds, tick)
-    ui.run(host="127.0.0.1", port=port, show=False, reload=False, title="table-talk", favicon="🗣")
+    ui.run(host=host, port=port, show=False, reload=False, title="table-talk", favicon="🗣")
 
 
 if __name__ in {"__main__", "__mp_main__"}:

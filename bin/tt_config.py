@@ -32,7 +32,10 @@ _LIGHT = {"bg": "#e8e6dc", "surface": "#faf9f5", "surface-2": "#f2f0e8",
           "mag": "#7a4a82"}
 
 DEFAULTS = {
-    "server": {"port": 8731, "poll_seconds": 2.0},
+    # host is a CHOICE, not free text: the dashboard has no authentication and
+    # renders work logs, project names and file paths, so the only two values
+    # worth offering are "keep it on this machine" and "put it on the network".
+    "server": {"host": "127.0.0.1", "port": 8731, "poll_seconds": 2.0},
     "ui": {"view": "merged", "columns": 0, "drawer_open": True,
            "filter_debounce_ms": 100,
            "collapsed_sections": ["glossary", "done"]},
@@ -75,6 +78,7 @@ _RANGES = {
 # of reaching the dashboard, where an unknown view or theme mode is a silent
 # fallback the user never learns about.
 _CHOICES = {
+    "server.host": ("127.0.0.1", "0.0.0.0"),
     "ui.view": ("merged", "flat"),
     "theme.default": ("system", "light", "dark"),
 }
@@ -280,6 +284,18 @@ def selftest():
         assert got["caret"] == "#ff00ff", "an explicit token still wins over the theme"
         assert got["act"] == _bundled["Dracula"]["tokens"]["act"], \
             "and overriding one colour must not discard the other sixteen"
+        # server.host: the default must keep the dashboard OFF the network, and
+        # a typo must not silently bind it there either.
+        assert DEFAULTS["server"]["host"] == "127.0.0.1", \
+            "the dashboard has no password, so reaching the network must be a " \
+            "deliberate edit and never what an untouched install does"
+        pick.write_text('[server]\nhost = "0.0.0.0"\n')
+        assert load(pick)["server"]["host"] == "0.0.0.0", \
+            "and asking for it must actually work, or the option is a lie"
+        pick.write_text('[server]\nhost = "0.0.0.0 "\n')
+        assert load(pick)["server"]["host"] == "127.0.0.1", \
+            "anything that is not one of the two known values falls back to " \
+            "localhost with a warning: a typo must never widen exposure"
         pick.write_text('[theme]\ndark_theme = "Nonesuch"\n')
         assert load(pick)["theme"]["dark"] == DEFAULTS["theme"]["dark"], \
             "an unknown theme name warns and keeps the built-in palette, rather " \
