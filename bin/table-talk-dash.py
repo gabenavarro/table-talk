@@ -480,6 +480,40 @@ def link_spans(text):
     return sorted(urls + paths)
 
 
+def port_free(port, bind=None):
+    """Whether the dashboard could actually take `port` right now.
+
+    A real bind, never a guess: a self-restart that lands on a taken port does
+    not MOVE the dashboard, it ends it - the process execs, fails to bind and
+    is gone, which is strictly worse than doing nothing. The window between
+    proving it free and taking it is accepted; nothing else on a loopback-only
+    box is racing for that number on purpose.
+    """
+    import socket
+    try:
+        with (bind or socket.socket)(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            sock.bind(("127.0.0.1", int(port)))
+        return True
+    except (OSError, OverflowError, TypeError, ValueError):
+        return False
+
+
+def restart_offer(running_port, config_port, explicit):
+    """What to say about a config port that no longer matches the running one.
+
+    Returns (should_offer, message). Silent when they agree, and silent when the
+    port came from --port: the flag deliberately beats the config, so editing
+    the file must not override something the user typed on the command line.
+    """
+    if explicit or not isinstance(config_port, int) or config_port == running_port:
+        return False, ""
+    if not port_free(config_port):
+        return True, (f"config asks for port {config_port}, but something else is "
+                      f"already listening there - still serving on {running_port}")
+    return True, f"config asks for port {config_port}; restart to move there?"
+
+
 def ensure_config(path=None, example=None):
     """The config file, created from the documented example if it is missing.
 
@@ -1247,6 +1281,33 @@ def selftest():
     assert ".lk-p" in css and ".lk{" in css, \
         "a link run needs its styles, and the inline rule is what keeps a cell one sentence"
 
+    # port_free / restart_offer: a self-restart onto a taken port does not move
+    # the dashboard, it ends it, so the check is a real bind.
+    import socket as _sock
+    _busy = _sock.socket(); _busy.bind(("127.0.0.1", 0)); _busy.listen(1)
+    _taken = _busy.getsockname()[1]
+    try:
+        assert port_free(_taken) is False, \
+            "a port something is listening on is NOT free; restarting onto it " \
+            "would exec, fail to bind, and leave no dashboard at all"
+        assert port_free(0) is True, "port 0 asks the OS for any free port"
+        for junk in ("nope", None, -1, 99999, 1.5):
+            assert port_free(junk) is False, f"{junk!r} is not a bindable port"
+        assert restart_offer(8731, 8731, False) == (False, ""), \
+            "no offer when the file and the running server already agree"
+        assert restart_offer(8731, 9000, True)[0] is False, \
+            "--port beats the config, so editing the file must not override a " \
+            "flag the user typed"
+        assert restart_offer(8731, "nine", False)[0] is False, \
+            "a non-numeric port cannot be offered; tt_config already rejects it"
+        offer, msg = restart_offer(8731, _taken, False)
+        assert offer and "already listening" in msg and "still serving" in msg, \
+            "a taken port is reported, never silently attempted"
+        free_offer, free_msg = restart_offer(8731, 0, False)
+        assert free_offer and "restart to move there" in free_msg
+    finally:
+        _busy.close()
+
     # ensure_config: the settings entry must have a file to open. A normal
     # install has none - the loader falls back to DEFAULTS - so opening the
     # path would do nothing at all, which is the failure it exists to remove.
@@ -1397,6 +1458,15 @@ def selftest():
         "one hardcoded False left the wall starting flat however the file was " \
         "written, and the three sites must agree or the first poll disagrees " \
         "with the toggle"
+    assert "if not port_free(want):" in code and code.index("if not port_free(want):") < code.index("os.execv(sys.executable"), \
+        "the new port is proven free BEFORE the exec: an exec onto a taken " \
+        "port does not move the dashboard, it ends it - the process replaces " \
+        "itself, fails to bind, and there is no server left at all"
+    assert "explicit_port = port is not None" in code \
+            and "explicit_port)" in code, \
+        "--port beats the config and keeps beating it: editing the file must " \
+        "not override a flag the user typed on the command line"
+    assert ".sl-port" in css, "the disagreement needs a segment to appear in"
     assert "M.blocked_by(ev, open_acts)" in code and "M.open_action_ids" in code, \
         "blocked-ness is DERIVED from whether the blocker is still open, so " \
         "answering the action unblocks every task pointing at it with no " \
@@ -1549,6 +1619,7 @@ def main(port=None):
     global CFG, ROOTS
     cfg = CFG = tt_config.load()
     ROOTS = link_roots(cfg)
+    explicit_port = port is not None      # --port beats the config, and keeps beating it
     port = cfg["server"]["port"] if port is None else port   # an explicit --port wins
     poll_seconds = cfg["server"]["poll_seconds"]
 
@@ -1607,6 +1678,7 @@ def main(port=None):
     # tabs open at once, the one that was clicked cleared its own gutter and the
     # untouched one kept its).
     touched = False                    # SEEN_JS saw a click/keypress/scroll; poll() consumes it
+    cfg_seen = None                    # config mtime last examined; see poll()
     wall_width = WALL_WIDTH            # until WIDTH_JS says otherwise
 
     def on_width(e):
@@ -1704,6 +1776,16 @@ def main(port=None):
             # id, not a class: TAB_TITLE_JS and TOAST_JS both getElementById this
             # and hang a MutationObserver on it. Keep the id if you move it.
             tally = ui.label("").classes("sl-s").props("id=tt-tally")
+            # The config and the running server disagree. Shown only when they do,
+            # so the statusline stays quiet in the normal case.
+            port_seg = ui.element("div").classes("sl-s sl-port")
+            with port_seg:
+                port_msg = ui.label("")
+                port_go = ui.element("button").classes("sl-c")
+                with port_go:
+                    ui.label("restart")
+                port_go.on("click", lambda _: do_restart())
+            port_seg.set_visibility(False)
             scope_seg = ui.element("div").classes("sl-s sl-scope")
             with scope_seg:
                 scope_label = ui.label("")
@@ -1754,6 +1836,22 @@ def main(port=None):
     # deleting them is what lets scope and zoom be reversible for free, and it is
     # what makes wall.clear() safe: clearing a column deletes what is inside it.
     attic = ui.element("div").style("display:none")
+
+    def do_restart():
+        """Re-exec this process so it re-reads the config, port and all.
+
+        Proven free FIRST: an exec onto a taken port does not move the
+        dashboard, it ends it. The config is re-read at startup, so nothing has
+        to be threaded through - and --port is not re-added, because a process
+        started with one never offers this.
+        """
+        want = tt_config.load()["server"]["port"]
+        if not port_free(want):
+            port_msg.set_text(f"port {want} is taken - still serving on {port}")
+            port_go.set_visibility(False)
+            return
+        logging.info("restarting onto port %s", want)
+        os.execv(sys.executable, [sys.executable, str(Path(__file__).resolve())])
 
     def cycle_theme():
         nonlocal mode
@@ -2316,6 +2414,22 @@ def main(port=None):
         # zoom are choices about the view, and the tab title and the toast hang
         # off this element to tell you from another monitor that something needs
         # you. A number that shrinks because you zoomed would be a lie.
+        # The config is re-read only when it CHANGES on disk: a poll is every two
+        # seconds and parsing TOML for an answer that almost never differs is
+        # exactly the kind of work the render was just taken off.
+        nonlocal cfg_seen
+        try:
+            stamp_now = tt_config.CONFIG_PATH.stat().st_mtime
+        except OSError:
+            stamp_now = None
+        if stamp_now != cfg_seen:
+            cfg_seen = stamp_now
+            offer, why = restart_offer(port, tt_config.load()["server"]["port"], explicit_port)
+            port_seg.set_visibility(bool(offer))
+            if offer:
+                port_msg.set_text(why)
+                port_go.set_visibility("restart to move there" in why)
+
         blocked_n = sum(1 for st in states.values() for e in st.values()
                         if e.get("type") == "task" and e.get("status") != "done"
                         and M.blocked_by(e, open_acts))
