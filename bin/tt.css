@@ -248,6 +248,13 @@ body{background:var(--bg);color:var(--ink);margin:0}
 /* the two halves of one bar: flex, or they stack as block divs into half-bars */
 .blocks{color:var(--ok);letter-spacing:-.5px;display:flex}
 .blocks .e{color:var(--ink-3);opacity:.45}
+/* A reading taken recently pulses; one that is not, does not. The animation
+   runs for exactly LIVE_WINDOW seconds and is started partway through by a
+   negative delay, so it ENDS by itself - a row repaints only when its own data
+   changes, so anything that needed switching off later would stay on forever.
+   It says a reading is recent, never that an agent is working right now. */
+.blocks.live{animation:live 2s ease-in-out 150}
+@keyframes live{0%,100%{opacity:1}50%{opacity:.5}}
 /* a blocked task is not running: it says what it waits on, in the alert ink
    the actions section uses, because the thing it waits on is an action */
 .blk{color:var(--act-2)}
@@ -436,5 +443,6 @@ body{background:var(--bg);color:var(--ink);margin:0}
   *,*::before,*::after{animation-duration:.001ms !important;
     animation-iteration-count:1 !important;transition-duration:.001ms !important}
   .cursor{visibility:visible}
+  .blocks.live{opacity:1}
   .bell{visibility:visible}
 }
