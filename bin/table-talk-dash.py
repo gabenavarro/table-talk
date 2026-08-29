@@ -84,8 +84,9 @@ COPY_JS = """<script>
 document.addEventListener('click', e => {
   const b = e.target.closest && e.target.closest('[data-id]');
   if (!b) return;
-  if (!/^[0-9a-f]{4,}$/.test(b.dataset.id || '')) return;  // never copy arbitrary text
-  const cmd = b.dataset.id;
+  const id = b.dataset.id || '', s = b.dataset.session || '';
+  if (!/^[0-9a-f]{4,}$/.test(id)) return;              // never copy arbitrary text
+  const cmd = /^[0-9a-f]{2,}$/.test(s) ? `SESSION: ${s} - ID: ${id}` : id;
   if (navigator.clipboard) navigator.clipboard.writeText(cmd).catch(() => {});
   b.classList.add('copied');
   setTimeout(() => b.classList.remove('copied'), 900);
@@ -365,18 +366,24 @@ def _dim(ev, query):
 
 
 def _id_button(ev, cls):
-    """The id is a click-to-copy control. A nested label rather than a bare
-    button so we stay on public API; the delegated listener finds the button
-    via closest().
+    """The id, and the session that owns it. A nested label rather than a bare
+    button so we stay on public API; the delegated listener finds the button via
+    closest().
 
-    The prop is assigned, never .props(f'data-id={...}'): see build_window."""
+    _from is set by the merged view; sid is the field itself, so the flat wall
+    shows ownership too. Both props are ASSIGNED, never interpolated into a
+    .props() string: see build_window.
+    """
     from nicegui import ui
+    sid = ev.get("_from") or ev.get("sid")
     btn = ui.element("button").classes(f"id {cls}")
     btn.props["data-id"] = str(ev["id"])
+    if sid:
+        btn.props["data-session"] = str(sid)
     with btn:
         ui.label(str(ev["id"]))
-        if ev.get("_from"):
-            ui.label(str(ev["_from"])).classes("sid")
+        if sid:
+            ui.label(str(sid)).classes("sid")
 
 
 def _marked(text, query, cls=None):
@@ -997,11 +1004,18 @@ def selftest():
         "clicking an id copies the ID ITSELF: an identifier that pastes as a " \
         "command cannot be used to refer to the item, grep for it, or build " \
         "any other command out of it"
-    assert COPY_JS.count("const cmd = b.dataset.id;") == 1 \
+    assert COPY_JS.count("const cmd = ") == 1 \
         and COPY_JS.index("[0-9a-f]{4,}") < COPY_JS.index("writeText"), \
-        "the id goes on the clipboard VERBATIM, and the guard runs BEFORE the " \
+        "the payload is built exactly once, and the id guard runs BEFORE the " \
         "write: anything spliced around the id is not greppable, and a guard " \
         "after the write puts a hostile data-id on the clipboard anyway"
+    assert 'SESSION: ${s} - ID: ${id}' in COPY_JS, \
+        "an id alone cannot say whose it is: one log file is one date+project " \
+        "and several sessions share it, which is why the merged view shows the " \
+        "pair and why the clipboard must carry both"
+    assert COPY_JS.index("[0-9a-f]{2,}") < COPY_JS.index("writeText"), \
+        "the session reaches the clipboard too, so it is guarded before the " \
+        "write like the id is - a stray data-session must not copy arbitrary text"
     assert ".tt-dim" in css and ".tt-hit" in css, "dim and highlight need styles to mean anything"
     assert ".tt-dim{opacity:.78}" in css, \
         "the dim opacity is measured against --surface: below .78 a filtered-out " \
@@ -1263,6 +1277,9 @@ def selftest():
         "never reaches the DOM and click-to-scroll has nothing to find"
     assert 'btn.props["data-id"] = str(ev["id"])' in code, \
         "the id button's data-id prop must be ASSIGNED; COPY_JS reads it"
+    assert 'ev.get("_from") or ev.get("sid")' in code, \
+        "the FLAT wall must show ownership as well: _from is set only by the " \
+        "merged view, so a re-tagged item was invisible on the day cards"
     assert "ROOTS or link_roots(CFG)" in code and "ROOTS = link_roots(cfg)" in code, \
         "the link roots are resolved ONCE per process, not per rendered cell: " \
         "they cannot change while it runs, and open_path still re-derives " \
