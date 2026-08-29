@@ -280,6 +280,29 @@ def referenced_open(states, marks, skip_id=None):
     return sorted(marks & open_actions(states) - {skip_id})
 
 
+def unchanged(path, raw):
+    """True if `path` still holds exactly the text we read into `raw`.
+
+    Claude Code writes settings.json itself (/permissions, /model). A lock
+    cannot help - the other writer does not take one - but re-reading before
+    the replace turns a silently lost update into a re-run.
+    """
+    return not path.exists() or path.read_text() == raw
+
+
+def project_of_id(id_):
+    """The project an id lives in, from the stem `YYYY-MM-DD-<project>`.
+
+    progress and done resolve an id across EVERY project, so the cwd's basename
+    is not necessarily the project the item belongs to. Warning about the cwd
+    silently skipped the very moment the check exists for - a task set to 100%
+    from a directory whose name did not match its project.
+    """
+    f = find_file_with_id(id_) if id_ else None
+    parts = f.stem.split("-", 3) if f else []
+    return parts[3] if len(parts) == 4 else None
+
+
 def warn_stale(project, skip_id=None):
     """Nudge about tasks left open at 100%, on stderr, never fatally.
 
@@ -425,18 +448,30 @@ def cmd_install_hook(remove=False, path=None):
     just this tool.
     """
     p = Path(path) if path else SETTINGS_PATH
+    if p.is_symlink():
+        # os.replace() would swap the LINK for a plain file, leaving the real
+        # file (and whatever dotfile manager tracks it) silently stale.
+        p = p.resolve()
     here = Path(__file__).resolve().parent
     try:
-        current = json.loads(p.read_text()) if p.exists() else {}
+        raw = p.read_text() if p.exists() else ""
+        current = json.loads(raw) if raw else {}
     except (OSError, ValueError) as e:
         sys.exit(f"error: cannot read {p}: {e}\nfix or move it, then re-run - "
                  "this file is not something to overwrite blindly")
     if not isinstance(current, dict):
         sys.exit(f"error: {p} is not a JSON object; refusing to touch it")
     new, done = current, []
-    for event, name in HOOKS:
-        new, what = edit_hooks(new, event, str(here / name), remove)
-        done.append((name, what))
+    try:
+        for event, name in HOOKS:
+            new, what = edit_hooks(new, event, str(here / name), remove)
+            done.append((name, what))
+    except (AttributeError, TypeError) as e:
+        # A hand-edited or plugin-written `hooks` of the wrong shape reached us.
+        # Refuse: the promise three lines up is that this file is not something
+        # to overwrite blindly, and a traceback is not a refusal.
+        sys.exit(f"error: {p} has a `hooks` section this tool does not "
+                 f"understand ({e}); fix it by hand, then re-run")
     if new is current:
         for name, what in done:
             print(f"{name}: {what}")
@@ -445,9 +480,14 @@ def cmd_install_hook(remove=False, path=None):
         p.parent.mkdir(parents=True, exist_ok=True)
         if p.exists():
             backup = p.with_suffix(".json.table-talk.bak")
-            if not backup.exists():
+            # is_file, not exists: a DIRECTORY at this path reads as "already
+            # backed up" and the only copy of the real config is never written.
+            if not backup.is_file():
                 backup.write_text(p.read_text())
                 print(f"backed up your settings to {backup}")
+        if not unchanged(p, raw):
+            sys.exit(f"error: {p} changed while this ran; nothing was written. "
+                     "re-run to pick up both changes")
         tmp = p.with_suffix(".json.tt-tmp")
         tmp.write_text(json.dumps(new, indent=2) + "\n")
         os.replace(tmp, p)          # atomic: a half-written settings.json
@@ -867,9 +907,11 @@ def selftest():
     code = src.split("def selftest():")[0] + src.split("\ndef main(", 1)[1]
     assert "flowchart LR" not in code, \
         "the CLI help must not offer the orientation the skill forbids"
-    assert "warn_stale(getattr(args, \"project\", None)," in code, \
-        "the nudge must fire from main() after a recording command: defined " \
-        "and never called, it catches exactly nothing"
+    assert "dict.fromkeys([project_of_id(_id)," in code and "warn_stale(_proj" in code, \
+        "the nudge must fire from main() for BOTH the item's project and this " \
+        "session's: defined and never called it catches nothing, the cwd's " \
+        "alone skips the item just touched, and the item's alone skips every " \
+        "other stale row in the project being reported on"
     assert dashboard_url().startswith("http://127.0.0.1:") and dashboard_url().endswith("/")
     assert "9500" in serve_refusal({"CLAUDECODE": "1"}, False, url="http://127.0.0.1:9500/"), \
         "the refusal names the port the dashboard is ACTUALLY on: hardcoded, it " \
@@ -1005,6 +1047,79 @@ def selftest():
         finally:
             DATA_DIR = keep2
 
+    # project_of_id: progress and done resolve an id across EVERY project.
+    with tempfile.TemporaryDirectory() as td:
+        keep3, DATA_DIR = DATA_DIR, Path(td)
+        try:
+            (DATA_DIR / "2026-01-01-other-proj.jsonl").write_text(json.dumps(
+                {"id": "7777", "type": "task", "status": "open",
+                 "pct": 100}) + "\n")
+            assert project_of_id("7777") == "other-proj", \
+                "the item's own project must be recoverable from its file, or " \
+                "a task set to 100% from a directory named something else is " \
+                "never checked - the exact moment this warning exists for"
+            assert project_of_id("nope") is None and project_of_id(None) is None, \
+                "an unknown id falls back to the caller's project, not a crash"
+            err = io.StringIO()
+            with contextlib.redirect_stderr(err):
+                warn_stale(project_of_id("7777"))
+            assert "7777" in err.getvalue(), "and the nudge then actually fires"
+        finally:
+            DATA_DIR = keep3
+
+    with tempfile.TemporaryDirectory() as td:
+        u = Path(td) / "s.json"
+        u.write_text("original")
+        assert unchanged(u, "original"), "an untouched file must read as unchanged"
+        u.write_text("someone else wrote this")
+        assert not unchanged(u, "original"), \
+            "a file rewritten since we read it must NOT read as unchanged: " \
+            "Claude Code writes settings.json itself, and replacing it from a " \
+            "stale copy silently discards the permission the user just granted"
+        assert unchanged(Path(td) / "gone.json", ""), \
+            "a file that never existed is not a concurrent write - the first " \
+            "install on a clean machine must not refuse itself"
+    assert "if not unchanged(p, raw):" in code, \
+        "the guard must be CALLED before the replace; computed and ignored it " \
+        "protects nothing"
+
+    # cmd_install_hook hardening: it edits a file this tool does not own.
+    with tempfile.TemporaryDirectory() as td:
+        sp = Path(td) / "settings.json"
+        sp.write_text(json.dumps({"model": "opus"}))
+        (Path(td) / "settings.json.table-talk.bak").mkdir()
+        try:
+            cmd_install_hook(path=sp)
+            raise AssertionError("expected a refusal")
+        except SystemExit:
+            pass
+        assert json.loads(sp.read_text()) == {"model": "opus"}, \
+            "a DIRECTORY at the backup path reads as 'already backed up': " \
+            "without an is_file check the settings are rewritten with no " \
+            "recoverable copy anywhere"
+        for bad in ({"hooks": None}, {"hooks": "x"}, {"hooks": {"PostToolUse": "x"}},
+                    {"hooks": {"PostToolUse": ["x"]}}):
+            sp2 = Path(td) / "bad.json"
+            sp2.write_text(json.dumps(bad))
+            try:
+                cmd_install_hook(path=sp2)
+                raise AssertionError(f"expected a refusal for {bad}")
+            except SystemExit:
+                pass
+            assert json.loads(sp2.read_text()) == bad, \
+                "a hooks section of the wrong shape must REFUSE and leave the " \
+                "file untouched; a traceback is not a refusal, and the " \
+                "docstring promises this file is never overwritten blindly"
+        real = Path(td) / "real.json"
+        real.write_text(json.dumps({"model": "opus"}))
+        link = Path(td) / "link.json"
+        link.symlink_to(real)
+        cmd_install_hook(path=link)
+        assert link.is_symlink() and "hooks" in json.loads(real.read_text()), \
+            "a symlinked settings.json (chezmoi, stow, any dotfile manager) " \
+            "must be written THROUGH: os.replace swaps the link for a plain " \
+            "file and leaves the tracked original silently stale"
+
     # tt-ref itself, run for real when jq is here. grep -o cannot produce
     # OVERLAPPING matches, so a hand-rolled separator group ate the boundary
     # the NEXT id needed: "a6d9 dcc5" recorded only a6d9, which is exactly the
@@ -1122,8 +1237,16 @@ def main():
         p.print_help()
 
     if args.cmd in ("action", "task", "progress", "done", "term", "diagram"):
-        warn_stale(getattr(args, "project", None),
-                   getattr(args, "id", None))
+        # BOTH projects: the one the item lives in (progress/done resolve an id
+        # across every project) and the one this session is reporting for. Using
+        # only the item's silently skips the cwd's other stale rows; using only
+        # the cwd's silently skips the item just touched. dict.fromkeys dedupes
+        # the common case where they are the same.
+        _id = getattr(args, "id", None)
+        for _proj in dict.fromkeys([project_of_id(_id),
+                                    safe_project(getattr(args, "project", None))]):
+            if _proj:
+                warn_stale(_proj, _id)
 
 
 if __name__ == "__main__":
