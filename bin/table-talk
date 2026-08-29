@@ -209,6 +209,36 @@ def with_extras(fields, args):
     return fields
 
 
+def blocker(action_id, state_of):
+    """Validate that `action_id` is a real, still-open action, and return it.
+
+    A task that cannot advance without the user is not running, and saying so
+    in free-text progress hides the ask where nothing can find it: not
+    `show --open`, not the wall's actions section, and not an id the user can
+    answer. Requiring a real open action to point at is what makes "blocked
+    with no blocker" impossible to express rather than merely discouraged.
+
+    state_of(id) -> the folded event, so the check is testable without a disk.
+    """
+    ev = state_of(action_id)
+    if not ev:
+        sys.exit(f"error: --blocked-on '{action_id}' not found; a blocked task "
+                 "must point at a real action")
+    if ev.get("type") != "action":
+        sys.exit(f"error: --blocked-on '{action_id}' is a {ev.get('type')}, not an "
+                 "action; only a decision you are waiting on can block a task")
+    if ev.get("status") == "done":
+        sys.exit(f"error: --blocked-on '{action_id}' is already done, so it "
+                 "cannot be what you are waiting for")
+    return action_id
+
+
+def _lookup(id_):
+    """The folded event for an id, anywhere in the data dir, or {}."""
+    f = find_file_with_id(id_)
+    return fold(f).get(id_, {}) if f else {}
+
+
 def progress_fields(args):
     """The event one `progress` call appends.
 
@@ -221,6 +251,8 @@ def progress_fields(args):
     fields = with_extras({"progress": args.text} if args.text else {}, args)
     if args.pct is not None:            # 0 is a reading; with_extras drops falsy
         fields["pct"] = args.pct
+    if getattr(args, "blocked_on", None):
+        fields["blocked_on"] = blocker(args.blocked_on, _lookup)
     if "progress" in fields or "pct" in fields:
         fields["read_ts"] = int(time.time())
     return fields
@@ -524,6 +556,23 @@ def selftest():
         assert fold(old_diagram_file)["dg01"]["mermaid"].endswith("a --> b"), \
             "the OLDER file's own history must not be rewritten (#140)"
     from types import SimpleNamespace as NS
+    # blocker: a blocked task must point at a real, OPEN action. This is what
+    # makes "blocked with no blocker" impossible to express - the failure it
+    # replaces was an ask hidden in free-text progress, which nothing could
+    # find and the user could not answer by id.
+    _fake = {"a100": {"type": "action", "status": "open"},
+             "a200": {"type": "action", "status": "done"},
+             "t300": {"type": "task", "status": "open"}}
+    assert blocker("a100", _fake.get) == "a100"
+    for bad, why in (("a200", "an action already answered cannot be what you wait for"),
+                     ("t300", "a task cannot block a task; only a decision can"),
+                     ("zzzz", "an id that does not exist is not a blocker")):
+        try:
+            blocker(bad, _fake.get)
+            raise AssertionError(f"blocker({bad!r}) must refuse: {why}")
+        except SystemExit:
+            pass
+
     # progress_fields: the reading's clock must not move when no reading was
     # taken. This is the whole reason the field exists.
     assert "read_ts" in progress_fields(NS(text="epoch 3/10", pct=None, intuitive=None, diagram=None))
@@ -596,6 +645,8 @@ def main():
     pr.add_argument("text", nargs="?", help="progress note; omit to only amend --intuitive/--diagram")
     pr.add_argument("--diagram", help="add or replace the item's ASCII sketch")
     pr.add_argument("--intuitive", help="add or replace the item's plain-English line")
+    pr.add_argument("--blocked-on", metavar="ACTION_ID",
+                    help="this task cannot advance until that action is answered")
     pr.add_argument("--pct", type=int,
                     help="explicit completion 0-100; beats any number found in the text")
 

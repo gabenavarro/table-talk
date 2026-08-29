@@ -150,6 +150,14 @@ wall, and claiming it asks the user to answer someone else's question.
 **🔵 Background work**
 | ID | What | Progress |
 
+A task that cannot advance without the user is BLOCKED, not running. Record the
+action, then point the task at it:
+`table-talk progress <task-id> --blocked-on <action-id>`. The CLI refuses
+anything that is not a real, still-open action, so a blocker cannot be a
+sentence in the progress column where nothing can find it — not `show --open`,
+not the wall, and not an id the user can answer. Answering the action unblocks
+the task by itself.
+
 An open task is a COMMITMENT TO CONTINUE, not a status label. While one is open
 the next reply carries it further, and ending a turn to ask which queued item to
 start is a protocol break when an open task already answers that. The two tables

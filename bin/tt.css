@@ -248,6 +248,9 @@ body{background:var(--bg);color:var(--ink);margin:0}
 /* the two halves of one bar: flex, or they stack as block divs into half-bars */
 .blocks{color:var(--ok);letter-spacing:-.5px;display:flex}
 .blocks .e{color:var(--ink-3);opacity:.45}
+/* a blocked task is not running: it says what it waits on, in the alert ink
+   the actions section uses, because the thing it waits on is an action */
+.blk{color:var(--act-2)}
 .pct{color:var(--ink-2)}
 /* when the reading was taken: a bar with no clock on it cannot be told apart
    from a live one, and this one froze 95 minutes ago on a real job */
