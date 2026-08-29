@@ -157,6 +157,101 @@ def load(path=None):
 THEMES_PATH = Path(__file__).with_name("themes.json")
 
 
+def form_fields():
+    """What a settings form may offer, derived from the validators themselves.
+
+    Never a second hardcoded list: a form that disagrees with the validator is
+    worse than no form, because it puts values into the file that then fall
+    back to defaults with a warning nobody sees. Colour tokens are deliberately
+    absent - seventeen of them across two modes is a colour-picker project, and
+    the file already does that well.
+    """
+    bundle = themes()
+    dark = [n for n, v in bundle.items() if v.get("mode") != "light"]
+    light = [n for n, v in bundle.items() if v.get("mode") != "dark"]
+    out = []
+    for key in ("ui.view", "theme.default", "server.host"):
+        out.append((key, "choice", list(_CHOICES[key])))
+    out.append(("theme.dark_theme", "choice", [""] + sorted(dark)))
+    out.append(("theme.light_theme", "choice", [""] + sorted(light)))
+    for key in ("server.port", "ui.columns", "server.poll_seconds",
+                "ui.filter_debounce_ms"):
+        out.append((key, "number", _RANGES[key]))
+    return out
+
+
+def _render(value):
+    """A TOML scalar. Managed values are enums and numbers, nothing exotic."""
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, (int, float)):
+        return repr(value)
+    return '"' + str(value).replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+_LINE = re.compile(r"^(\s*)([A-Za-z0-9_-]+)(\s*=\s*)(.*?)(\s*#.*)?$")
+
+
+def set_keys(path, updates):
+    """Set `{"section.key": value}` in a TOML file, keeping everything else.
+
+    LINE SURGERY, not a dump. Re-serialising the parsed config would flatten a
+    heavily commented file into bare values and silently materialise every
+    default the user never chose - the file is documentation as much as data.
+    Only the one line per key is touched; its trailing comment is kept.
+
+    The safety net is that the result is PARSED and the value read back before
+    it replaces anything. Text editing that produced a file which does not load,
+    or does not mean what was asked, is discarded rather than saved.
+
+    Returns (ok, message).
+    """
+    path = Path(path)
+    try:
+        lines = path.read_text().splitlines() if path.exists() else []
+    except OSError as e:
+        return False, f"cannot read {path}: {e}"
+    for dotted, value in updates.items():
+        section, _, key = dotted.rpartition(".")
+        head = [i for i, l in enumerate(lines) if l.strip() == f"[{section}]"]
+        if not head:
+            lines += ["", f"[{section}]", f"{key} = {_render(value)}"]
+            continue
+        start = head[0] + 1
+        end = next((i for i in range(start, len(lines))
+                    if lines[i].lstrip().startswith("[")), len(lines))
+        for i in range(start, end):
+            m = _LINE.match(lines[i])
+            if m and m.group(2) == key:
+                lines[i] = (f"{m.group(1)}{key}{m.group(3)}{_render(value)}"
+                            f"{m.group(5) or ''}")
+                break
+        else:
+            # After the section's last NON-BLANK line, not at its boundary:
+            # inserting at `end` puts the key past the blank separator and
+            # jams it against the next [header], where it reads as though it
+            # belonged to that section even though TOML says otherwise.
+            while end > start and not lines[end - 1].strip():
+                end -= 1
+            lines.insert(end, f"{key} = {_render(value)}")
+    text = "\n".join(lines) + "\n"
+    try:
+        got = tomllib.loads(text)
+    except tomllib.TOMLDecodeError as e:
+        return False, f"refusing to save: the result would not parse ({e})"
+    for dotted, value in updates.items():
+        section, _, key = dotted.rpartition(".")
+        if got.get(section, {}).get(key) != value:
+            return False, f"refusing to save: {dotted} did not round-trip"
+    try:
+        tmp = path.with_suffix(".toml.tt-tmp")
+        tmp.write_text(text)
+        os.replace(tmp, path)       # never a half-written config
+    except OSError as e:
+        return False, f"cannot write {path}: {e}"
+    return True, "saved"
+
+
 def themes():
     """The bundled palettes: {name: {"tokens": {...}, "adapted": [...], "dark": bool}}.
 
@@ -289,6 +384,65 @@ def selftest():
         assert DEFAULTS["server"]["host"] == "127.0.0.1", \
             "the dashboard has no password, so reaching the network must be a " \
             "deliberate edit and never what an untouched install does"
+        # set_keys: the file is DOCUMENTATION as much as data. A dump of the
+        # parsed config would flatten it and materialise every default.
+        w = Path(td) / "w.toml"
+        w.write_text('# mine\n\n[server]\nport = 8731   # the port\n'
+                     '# keep me\npoll_seconds = 2.0\n\n[ui]\nview = "merged"\n')
+        ok, msg = set_keys(w, {"server.port": 9000, "server.host": "0.0.0.0"})
+        got = w.read_text()
+        assert ok, msg
+        assert "# the port" in got and "# keep me" in got and "# mine" in got, \
+            "every comment must survive: this file explains itself, and a " \
+            "settings form that silently strips the explanations makes the " \
+            "config worse than it was before the form existed"
+        assert "poll_seconds = 2.0" in got, "untouched keys keep their value"
+        assert load(w)["server"]["port"] == 9000 and \
+               load(w)["server"]["host"] == "0.0.0.0", "and the write took"
+        lines = got.splitlines()
+        assert lines[lines.index('host = "0.0.0.0"') - 1].startswith("poll_seconds"), \
+            "a NEW key goes after the section's last real line, not past the " \
+            "blank separator where it reads as part of the next section"
+        w.write_text("[ui]\nview = \"merged\"\n")
+        ok, _ = set_keys(w, {"theme.default": "dark"})
+        assert ok and load(w)["theme"]["default"] == "dark" and \
+               load(w)["ui"]["view"] == "merged", \
+            "a key whose section is absent appends the section, and must not " \
+            "disturb the sections already there"
+        w.write_text('[server]\nnote = """\nport = 1\n"""\n')
+        ok, msg = set_keys(w, {"server.port": 9000})
+        assert not ok and "round-trip" in msg, \
+            "line surgery can match inside a MULTI-LINE STRING: the result " \
+            "still parses but means something else entirely, so the value is " \
+            "read back before anything is replaced"
+        assert w.read_text() == '[server]\nnote = """\nport = 1\n"""\n', \
+            "and the file is left exactly as it was"
+        w.write_text("[server]\nport = 8731\n")
+        ok, msg = set_keys(w, {"server.host": 'x"\nport = 1'})
+        assert w.read_text() == "[server]\nport = 8731\n", \
+            "a value that would break the file must leave it EXACTLY as it " \
+            "was: the config is read on every start, and a corrupt one is a " \
+            "dashboard that will not come up"
+        assert not list(Path(td).glob("*tt-tmp")), \
+            "and no half-written temp file may survive a refusal"
+        # form_fields is derived, never a second list that can disagree.
+        keys = {k for k, _, _ in form_fields()}
+        assert keys >= set(_CHOICES) and "server.port" in keys, \
+            "the form must offer what the VALIDATOR knows: a form built from " \
+            "its own hardcoded list drifts, and then writes values that fall " \
+            "back to defaults with a warning the user never sees"
+        assert all(o in dict((k, v) for k, _, v in form_fields())["ui.view"]
+                   for o in _CHOICES["ui.view"]), "choices come from _CHOICES"
+        kinds = {k: (kind, v) for k, kind, v in form_fields()}
+        assert kinds["server.port"] == ("number", _RANGES["server.port"]) and \
+               kinds["ui.columns"] == ("number", _RANGES["ui.columns"]), \
+            "a number field must carry the VALIDATOR's own bounds: a form that " \
+            "invents its own lets a value through that load() then rejects, " \
+            "so the setting silently does not take"
+        names = dict((k, v) for k, _, v in form_fields())["theme.dark_theme"]
+        assert "" in names and len(names) > 1 and "Dracula" in names, \
+            "theme names come from the bundle, with \"\" for the built-in one"
+
         pick.write_text('[server]\nhost = "0.0.0.0"\n')
         assert load(pick)["server"]["host"] == "0.0.0.0", \
             "and asking for it must actually work, or the option is a lie"
