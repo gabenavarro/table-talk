@@ -136,6 +136,11 @@ A progress bar pulses for five minutes after a reading was taken, then goes
 still. That says *recent*, not *working* — a log records what happened, never
 what is happening.
 
+A task that reaches 100% and is never closed is the one kind of drift the log
+can see by itself, so every recording command checks for it and prints a note.
+It stays quiet for a task that is `done`, for the id you just wrote, and for
+one blocked on a still-open action.
+
 For a true signal, install the heartbeat hook. `bin/tt-beat` is a
 `PostToolUse` hook: it reads the hook payload, takes the first four characters
 of the session id — the same `sid` the CLI stamps on every event — and touches
