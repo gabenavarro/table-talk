@@ -71,6 +71,7 @@ install.sh symlinks the CLI into ~/.local/bin — make sure that's on your PATH.
     tid=$(table-talk task "Training GPN model")
     table-talk progress "$tid" "epoch 3/10" --pct 30   # --pct beats any number in the text
     table-talk progress "$id" --intuitive "what this means in plain words"   # amend, no note
+    table-talk progress "$tid" --blocked-on "$id"   # not running: waiting on that decision
     table-talk done "$id"
     table-talk term "FVA" --intuitive "range of possible flux" --technical "LP min/max per reaction at fixed optimum"
     table-talk task "GPN training" --intuitive "teaching a model to read DNA" --diagram $'data\n  ▼\ntrain\n  ▼\neval'

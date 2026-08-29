@@ -167,12 +167,20 @@ def scroll_js(key):
             '?.scrollIntoView({behavior:"smooth",block:"start"})})')
 
 
-def tally_text(open_actions, open_tasks):
+def tally_text(open_actions, open_tasks, blocked=0):
+    """The statusline's answer to 'is anything happening?'.
+
+    Blocked is its own number and is subtracted from running by the caller: a
+    task waiting on a decision is not running, and counting it as such is what
+    let three finished PRs read as work in flight.
+    """
     parts = []
     if open_actions:
         parts.append(f"●{open_actions} open")
     if open_tasks:
         parts.append(f"▶{open_tasks} running")
+    if blocked:
+        parts.append(f"⏸{blocked} blocked")
     return "  ".join(parts) if parts else "all clear"
 
 
@@ -580,7 +588,7 @@ def _action_row(ev, blink, query, changed):
             _art_sub(ev)
 
 
-def _task_row(ev, query, changed):
+def _task_row(ev, query, changed, blocked=None):
     from nicegui import ui
     with ui.element("div").classes(("row changed-job" if changed else "row") + _dim(ev, query)):
         _id_button(ev, "id-job")
@@ -589,7 +597,14 @@ def _task_row(ev, query, changed):
             text = ev.get("progress", "")
             pct = M.progress_pct(ev)
             with ui.element("div").classes("meter"):
-                if pct is None:
+                # A blocked task is NOT running, and drawing it with the same
+                # bar as a moving one is what let a blocker hide in free-text
+                # progress: the wall answered "how far" and never "is anything
+                # happening".
+                if blocked:
+                    ui.label("⏸").classes("blk")
+                    ui.label(f"blocked on {blocked}").classes("blk")
+                elif pct is None:
                     with ui.element("div").classes("scan"):
                         for _ in range(5):
                             ui.label("▓")
@@ -742,7 +757,7 @@ def _prompt(cls, title, count, toggles=None, opened=None, key="", force=False, b
     line.on("click", flip)
 
 
-def render_window_body(container, state, newest_action_id, query="", changed=(), collapsed=()):
+def render_window_body(container, state, newest_action_id, query="", changed=(), collapsed=(), open_acts=()):
     """Rebuild one window's body.
 
     A window holds a handful of rows, so rebuilding it is cheaper and far
@@ -792,7 +807,8 @@ def render_window_body(container, state, newest_action_id, query="", changed=(),
             if not jobs:
                 ui.label("nothing running").classes("empty")
             for ev in jobs:
-                _task_row(ev, query, str(ev["id"]) in changed)
+                _task_row(ev, query, str(ev["id"]) in changed,
+                          M.blocked_by(ev, open_acts))
         _prompt("p-job", "jobs", len(jobs), toggles=jobs_box, opened=opened,
                 key="job", force=_hits(jobs, query),
                 bar=bar_for(len(jobs), len(done) - done_a))
@@ -1078,6 +1094,10 @@ def selftest():
         "the tree, its meters and the collapsed rail all need styles to mean anything"
     assert len(SPINNER) == 10 and SPINNER[0] == "⠋"
     assert tally_text(6, 5) == "●6 open  ▶5 running"
+    assert tally_text(1, 2, 3) == "●1 open  ▶2 running  ⏸3 blocked", \
+        "a task waiting on a decision is NOT running: counting it as such is " \
+        "what let finished work read as work in flight"
+    assert tally_text(0, 0, 1) == "⏸1 blocked"
     assert tally_text(0, 0) == "all clear"
     assert tally_text(1, 0) == "●1 open"
     assert tally_text(0, 2) == "▶2 running"
@@ -1377,6 +1397,14 @@ def selftest():
         "one hardcoded False left the wall starting flat however the file was " \
         "written, and the three sites must agree or the first poll disagrees " \
         "with the toggle"
+    assert "M.blocked_by(ev, open_acts)" in code and "M.open_action_ids" in code, \
+        "blocked-ness is DERIVED from whether the blocker is still open, so " \
+        "answering the action unblocks every task pointing at it with no " \
+        "second write and nothing to forget"
+    assert "changed, open_acts)" in code, \
+        "open_acts is in the paint signature: a window must repaint when its " \
+        "blocker is answered, which changes nothing in its own file"
+    assert ".blk" in css, "a blocked task needs to look different from a running one"
     assert 'ctx.append(("settings", cfg_path))' in code, \
         "every setting the wall obeys lives in a file the user had no way to " \
         "reach from the dashboard, and that a normal install does not even have"
@@ -2103,7 +2131,7 @@ def main(port=None):
         win["zoom"].set_visibility(key == zoomed)
         win["star"].set_visibility(cur)
 
-    def paint_window(win, key, state, newest, query="", changed=()):
+    def paint_window(win, key, state, newest, query="", changed=(), open_acts=()):
         """Update everything about one window that depends on its data.
         Called only when that window's data actually changed."""
         summary = M.summarize(state)
@@ -2123,7 +2151,7 @@ def main(port=None):
         win["when"].props.set_optional(
             "title", stamp(summary["latest"]) if summary["latest"] else None)
         render_window_body(win["body"], state, newest, query, changed,
-                           cfg["ui"]["collapsed_sections"])
+                           cfg["ui"]["collapsed_sections"], open_acts)
 
     def repack(visible, cols, weights):
         """Move existing windows into freshly sized columns. move() preserves
@@ -2214,6 +2242,10 @@ def main(port=None):
             repack(visible, cols,
                    {k: 1 if k in folds else M.weight(v) for k, v in wall_states.items()})
 
+        # Across EVERY file, not just what is on the wall: a task's blocker can
+        # be an action recorded on another day, and resolving it per file would
+        # strand that task blocked forever.
+        open_acts = frozenset(M.open_action_ids(states.values()))
         query = (search.value or "").strip()
         # exactly one cursor on the page: the newest open action anywhere on the wall
         newest, newest_ts = None, -1
@@ -2237,14 +2269,17 @@ def main(port=None):
             # DROP its gutters never repaints: its data did not change, that is
             # the whole point of it
             changed = changed_ids(wall_states[k], seen_at.get(k, opened_ts))
-            sig = (query, newest, wall_states[k], changed)
+            # open_acts is in the signature because a window must repaint when
+            # its blocker is ANSWERED - that changes nothing in its own file.
+            sig = (query, newest, wall_states[k], changed, open_acts)
             if win["sig"] != sig:
                 # Per WINDOW, so one unrenderable row costs its own card and not
                 # the wall: tick()'s guard is all-or-nothing, and the poll that
                 # follows a bad row fails at exactly the same place, so the
                 # freeze is permanent and shows only as a stale spinner.
                 try:
-                    paint_window(win, k, wall_states[k], newest, query, changed)
+                    paint_window(win, k, wall_states[k], newest, query, changed,
+                                 open_acts)
                 except Exception:
                     logging.exception("could not paint window %s", k)
                     continue
@@ -2281,8 +2316,12 @@ def main(port=None):
         # zoom are choices about the view, and the tab title and the toast hang
         # off this element to tell you from another monitor that something needs
         # you. A number that shrinks because you zoomed would be a lie.
+        blocked_n = sum(1 for st in states.values() for e in st.values()
+                        if e.get("type") == "task" and e.get("status") != "done"
+                        and M.blocked_by(e, open_acts))
         tally.set_text(tally_text(sum(g["open_actions"] for g in groups),
-                                  sum(g["open_tasks"] for g in groups)))
+                                  sum(g["open_tasks"] for g in groups) - blocked_n,
+                                  blocked_n))
         scope_seg.set_visibility(scope is not None)
         if scope:
             scope_label.set_text(f"showing {scope} only")

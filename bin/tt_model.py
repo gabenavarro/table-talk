@@ -110,6 +110,28 @@ def percent(text):
     return None
 
 
+def blocked_by(ev, open_actions):
+    """The open action this task is waiting on, or None.
+
+    Derived, never stored as a state: the task records WHAT it waits for, and
+    whether it is still waiting is answered by whether that action is still
+    open. So answering the action unblocks every task pointing at it, with no
+    second write and nothing to forget.
+
+    open_actions is the set of ids open across the whole data dir, because the
+    blocking action can live in another day's file - resolving it per file
+    would strand a task blocked forever.
+    """
+    blocker = ev.get("blocked_on")
+    return blocker if blocker in open_actions else None
+
+
+def open_action_ids(states):
+    """Every open action id across every session file."""
+    return {str(e["id"]) for st in states for e in st.values()
+            if e.get("type") == "action" and e.get("status") != "done" and "id" in e}
+
+
 def progress_pct(ev):
     """The number the bar draws: the explicit --pct if one was recorded, else
     whatever percent() can scrape out of the prose.
@@ -546,6 +568,20 @@ def selftest():
     assert percent("Blocked on capacity (see 9a70), not on code") is None
     assert percent("Seeds 8042000-8042328 planned") is None, "a numeric range is not a fraction"
     assert percent("") is None and percent(None) is None
+
+    # blocked_by: derived from whether the blocking action is still open, so
+    # answering the action unblocks the task with no second write.
+    _open = open_action_ids([{"a1": {"id": "a1", "type": "action", "status": "open"},
+                              "a2": {"id": "a2", "type": "action", "status": "done"},
+                              "t1": {"id": "t1", "type": "task", "status": "open"}}])
+    assert _open == {"a1"}, "only OPEN actions can block; a task never blocks a task"
+    assert blocked_by({"blocked_on": "a1"}, _open) == "a1"
+    assert blocked_by({"blocked_on": "a2"}, _open) is None, \
+        "answering the action unblocks every task pointing at it, with no second write"
+    assert blocked_by({"blocked_on": "gone"}, _open) is None, \
+        "a blocker that no longer exists cannot hold a task hostage"
+    assert blocked_by({}, _open) is None
+    assert open_action_ids([]) == set()
 
     # progress_pct: an explicit reading beats one scraped out of prose. This
     # exact sentence is real gpn-micro progress; scraping drew a 92% bar from
