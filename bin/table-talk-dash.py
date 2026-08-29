@@ -480,6 +480,33 @@ def link_spans(text):
     return sorted(urls + paths)
 
 
+def transcripts(root=None):
+    """{4-char session prefix: transcript path}, for prefixes that are UNIQUE.
+
+    Derived, never stored. The log keeps only `sid` - four characters - and the
+    transcript is named for the full session id, so the pointer is resolved by
+    matching the prefix rather than by carrying 32 more bytes on every event
+    that would never be read.
+
+    An ambiguous prefix is DROPPED rather than guessed: two sessions sharing
+    four characters is unlikely (39 distinct of 39 here) but linking to the
+    wrong conversation is worse than linking to none. Every project directory is
+    searched, because a session's cwd need not be the one the dashboard was
+    started in - measured at 0.2 ms for 39 files, so it is done per poll rather
+    than cached into staleness.
+    """
+    root = Path(root) if root else Path.home() / ".claude" / "projects"
+    seen = {}
+    try:
+        found = list(root.glob("*/*.jsonl"))
+    except OSError:
+        return {}
+    for f in found:
+        key = f.stem[:4]
+        seen[key] = None if key in seen else f      # None marks it ambiguous
+    return {k: v for k, v in seen.items() if v is not None}
+
+
 # How long a heartbeat counts as current. Generous on purpose: a session can
 # think, or wait on a long command, for well over a minute between tool calls,
 # and calling that dead would be the same lie as calling a stale bar live.
@@ -1343,6 +1370,26 @@ def selftest():
     assert ".lk-p" in css and ".lk{" in css, \
         "a link run needs its styles, and the inline rule is what keeps a cell one sentence"
 
+    # transcripts: the pointer is DERIVED from the 4-char sid, so nothing extra
+    # is stored - and an ambiguous prefix is dropped, because linking to the
+    # wrong conversation is worse than linking to none.
+    with tempfile.TemporaryDirectory() as td:
+        proj = Path(td) / "-home-x-proj"; proj.mkdir()
+        (proj / "0d2b330d-aaaa.jsonl").touch()
+        other = Path(td) / "-home-x-other"; other.mkdir()
+        (other / "e472080d-bbbb.jsonl").touch()
+        got = transcripts(td)
+        assert set(got) == {"0d2b", "e472"}, \
+            "every project directory is searched: a session's cwd need not be " \
+            "the one the dashboard was started in"
+        assert got["0d2b"].name == "0d2b330d-aaaa.jsonl"
+        (other / "0d2bffff-cccc.jsonl").touch()
+        assert "0d2b" not in transcripts(td), \
+            "an ambiguous prefix is dropped: linking to the WRONG conversation " \
+            "is worse than linking to none"
+        assert transcripts(Path(td) / "missing") == {}, \
+            "no transcripts at all is silence, not a crash"
+
     # live_sessions: the only thing that can answer "is an agent working NOW".
     # Everything about it degrades to "nobody is known to be working", which is
     # honest for the majority who have not installed the hook.
@@ -1551,6 +1598,12 @@ def selftest():
         "one hardcoded False left the wall starting flat however the file was " \
         "written, and the three sites must agree or the first poll disagrees " \
         "with the toggle"
+    assert 'win["tx"] = tx_map.get(sid_now)' in code and "tx_map = transcripts()" in code, \
+        "the transcript is resolved per poll and handed to the window: it is " \
+        "derived from the 4-char sid, so nothing extra is stored on any event"
+    assert "extra_roots=(str(windows[k][\"tx\"]),)" in code, \
+        "a transcript lives outside the data dir and the cwd, so confinement is " \
+        "widened for exactly that one file - the same way the CLAUDE.md links do"
     assert 'win["beat"].set_visibility' in code and "beating = live_sessions(now)" in code, \
         "the heartbeat is applied per poll and OUTSIDE the paint signature: it " \
         "changes nothing in any session file, so a window would never repaint " \
@@ -2040,7 +2093,16 @@ def main(port=None):
         with el:
             with ui.element("div").classes("win-t"):
                 ui.label(project).classes("nm")
-                ix = ui.label("").classes("ix")
+                # The session code IS the way into its conversation. A button
+                # always, so the affordance never appears and disappears as
+                # transcripts come and go; the handler reads the path the poll
+                # last resolved, and does nothing when there is none.
+                ix = ui.element("button").classes("ix")
+                with ix:
+                    ix_lbl = ui.label("")
+                ix.on("click", lambda _, k=key: (windows.get(k, {}).get("tx")
+                                                 and open_path(str(windows[k]["tx"]), cfg,
+                                                               extra_roots=(str(windows[k]["tx"]),))))
                 bell = ui.label("!").classes("bell")
                 actv = ui.label("#").classes("actv")
                 mark = ui.label("M").classes("fl-m")
@@ -2061,7 +2123,7 @@ def main(port=None):
             with ui.element("div").classes("win-f"):
                 cells = ui.element("div").classes("cells")
                 tally = ui.label("")
-        return {"el": el, "body": body, "ix": ix, "bell": bell, "actv": actv, "mark": mark,
+        return {"el": el, "body": body, "ix": ix, "ix_lbl": ix_lbl, "tx": None, "bell": bell, "actv": actv, "mark": mark,
                 "zoom": zoom, "star": star, "beat": beat, "when": when, "cells": cells,
                 "tally": tally,
                 "hot": False, "latest": 0, "sig": None}
@@ -2461,6 +2523,7 @@ def main(port=None):
         # Outside the paint signature deliberately: a heartbeat changes nothing
         # in any session file, so a window would never repaint for it.
         beating = live_sessions(now)
+        tx_map = transcripts()
         query = (search.value or "").strip()
         # exactly one cursor on the page: the newest open action anywhere on the wall
         newest, newest_ts = None, -1
@@ -2506,8 +2569,11 @@ def main(port=None):
             # both advance without the window's own data changing: age with the
             # clock, the tmux index whenever a newer sibling session appears
             win["beat"].set_visibility(session_label(wall_states[k], "") in beating)
+            sid_now = session_label(wall_states[k], where[k][1])
+            win["tx"] = tx_map.get(sid_now)
+            win["ix"].props.set_optional("title", f"open {win['tx']}" if win["tx"] else None)
             for el, txt in ((win["when"], ago(win["latest"]) if win["latest"] else ""),
-                            (win["ix"], f":{session_label(wall_states[k], where[k][1])}")):
+                            (win["ix_lbl"], f":{sid_now}")):
                 if el.text != txt:
                     el.set_text(txt)
         # Only now, only if you touched the page since the last poll, and only
