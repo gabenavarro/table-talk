@@ -1323,6 +1323,11 @@ def selftest():
         "attribute, so this must precede every nicegui import - unset, theme, " \
         "marks, scope and the seen-watermarks belong to the shell's PWD, and " \
         "app.storage.path assigned later does nothing"
+    assert code.count('store("merged", cfg["ui"]["view"] == "merged")') == 3, \
+        "every read of the view default comes from the CONFIG, not a literal: " \
+        "one hardcoded False left the wall starting flat however the file was " \
+        "written, and the three sites must agree or the first poll disagrees " \
+        "with the toggle"
     assert 'port = cfg["server"]["port"] if port is None else port' in code, \
         "the config is the DEFAULT port; an explicit --port still wins"
     assert '"gls": "glossary" not in collapsed' in code and '"ok": "done" not in collapsed' in code, \
@@ -1792,7 +1797,7 @@ def main(port=None):
         # While merged the wall holds PROJECTS, so a session stem is on it under
         # its project's name: resolve it, or this clears scope and needs-me and
         # then scrolls to a window that does not exist.
-        if store("merged", False):
+        if store("merged", cfg["ui"]["view"] == "merged"):
             key = M.parse_stem(key)[1]
         on_pick(key)
         if key not in on_wall:
@@ -1837,7 +1842,7 @@ def main(port=None):
             put("needs_me", needs_me)
             tick()
         elif what == "merge":
-            put("merged", not store("merged", False))
+            put("merged", not store("merged", cfg["ui"]["view"] == "merged"))
             tick()
         elif what == "unzoom":
             if zoomed:
@@ -2103,7 +2108,7 @@ def main(port=None):
         apply_fold_rules(ordered)     # before the render, or a forced-open group draws folded
         render_drawer(drawer, ordered)
 
-        merged = bool(store("merged", False))
+        merged = bool(store("merged", cfg["ui"]["view"] == "merged"))
         # The DRAWER always lists real session files; only the wall merges.
         if merged:
             wall_states = M.merge_projects(list(states.items()))
