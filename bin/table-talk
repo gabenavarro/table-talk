@@ -226,15 +226,40 @@ def progress_fields(args):
     return fields
 
 
+def transfer(ev, me):
+    """Who an item belongs to after this write, and what to say about it.
+
+    Returns (extra fields, notice-or-None). Ownership is one field on one event,
+    so a hand-off is one more key on the append update() already performs: no
+    second file, no new status, nothing whose ordering matters, and nothing for
+    a crash to land between. The item does not change file - `show --mine`
+    globs every dated file of the project and filters on sid, so the new owner
+    sees it wherever it lives.
+
+    An item with no sid is adopted silently: there is no session to take it
+    from. A caller with no sid takes nothing: that is a human terminal.
+    """
+    owner = ev.get("sid")
+    if not (owner and me and owner != me):
+        return {}, None
+    return {"sid": me}, f"moved {ev.get('id')} from session {owner} to {me}"
+
+
 def update(id_, fields):
     """Append a partial update to the file that contains id_ (folding is per-file)."""
     f = find_file_with_id(id_)
     if not f:
         sys.exit(f"error: id '{id_}' not found in {DATA_DIR}")
-    typ = fold(f).get(id_, {}).get("type")
+    ev = fold(f).get(id_, {})
+    typ = ev.get("type")
     if typ not in ("action", "task"):
         sys.exit(f"error: id '{id_}' is a {typ or 'unknown record'}, not an action/task")
-    append(f, {"id": id_, "ts": int(time.time()), **fields})
+    extra, notice = transfer(ev, session_code())
+    if notice:
+        # stderr, and the skill also requires the reply to say it: the premise
+        # is that the session did not know whose item this was.
+        print(notice, file=sys.stderr)
+    append(f, {"id": id_, "ts": int(time.time()), **fields, **extra})
 
 
 def cmd_show(project, open_only=False, mine=False):
@@ -394,6 +419,29 @@ def selftest():
             raise AssertionError("--mine without a session id must refuse, not show everything")
         except SystemExit:
             pass
+        os.environ["CLAUDE_CODE_SESSION_ID"] = "aaaa-x"
+
+        # Ownership is one field on one event, so a hand-off is one more key on the
+        # append update() already makes. A session that forgot whose item it was
+        # touching is exactly the case this must catch.
+        assert transfer({"id": "4c1a", "sid": "7e2b"}, "9f3c") == (
+            {"sid": "9f3c"}, "moved 4c1a from session 7e2b to 9f3c")
+        assert transfer({"id": "4c1a", "sid": "7e2b"}, "7e2b") == ({}, None), \
+            "the owner touching its own item is not a transfer"
+        assert transfer({"id": "4c1a"}, "9f3c") == ({}, None), \
+            "an item with no session is adopted silently: there is nobody to take it from"
+        assert transfer({"id": "4c1a", "sid": "7e2b"}, "") == ({}, None), \
+            "a human terminal has no session id and must not take anything over"
+
+        os.environ["CLAUDE_CODE_SESSION_ID"] = "7e2bxxxx"
+        owned = add_event("shift", {"type": "action", "status": "open",
+                                    "background": "b", "why": "w", "rec": "r"})
+        os.environ["CLAUDE_CODE_SESSION_ID"] = "9f3cxxxx"
+        update(owned, {"progress": "taken over"})
+        assert fold(session_file("shift"))[owned]["sid"] == "9f3c", \
+            "touching another session's item hands it over; nothing else does"
+        assert fold(session_file("shift"))[owned]["background"] == "b", \
+            "and the hand-off must not disturb any other field"
         os.environ["CLAUDE_CODE_SESSION_ID"] = "aaaa-x"
 
         assert find_file_with_id("a1b2") == f

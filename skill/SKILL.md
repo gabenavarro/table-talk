@@ -164,6 +164,10 @@ technical = the precise definition, jargon spelled out.
 - Record whole URLs, never a bare `#117`: the dashboard makes an http(s) URL a
   button and cannot guess which repository a `#ref` belongs to.
 - IDs are 4 hex chars, printed by the CLI — never invent one; always use the printed value.
+- Acting on another session's item takes it over: `progress` and `done` re-tag
+  it to you and the CLI prints `moved <id> from session <a> to <b>`. Say so in
+  your reply — the user does not see that line, and an item changing hands
+  silently is the thing this protocol exists to prevent.
 - At session start, if the dashboard is down (check below), mention `table-talk serve` once — never run it yourself.
 
 ## The server — never run it, and end the turn
