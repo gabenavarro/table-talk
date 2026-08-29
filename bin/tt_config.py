@@ -32,7 +32,8 @@ _LIGHT = {"bg": "#e8e6dc", "surface": "#faf9f5", "surface-2": "#f2f0e8",
 
 DEFAULTS = {
     "server": {"port": 8731, "poll_seconds": 2.0},
-    "ui": {"columns": 0, "drawer_open": True, "filter_debounce_ms": 100,
+    "ui": {"view": "merged", "columns": 0, "drawer_open": True,
+           "filter_debounce_ms": 100,
            "collapsed_sections": ["glossary", "done"]},
     # xdg-open does not exist on macOS, and both launchers swallow a missing
     # command into stderr the user is not watching - deliberately, and pinned -
@@ -64,6 +65,15 @@ _RANGES = {
     "ui.filter_debounce_ms": (0, float("inf")),
 }
 
+# Keys whose value must be one OF a set rather than within a range. Same
+# treatment as _RANGES: a typo falls back to the default with a warning instead
+# of reaching the dashboard, where an unknown view or theme mode is a silent
+# fallback the user never learns about.
+_CHOICES = {
+    "ui.view": ("merged", "flat"),
+    "theme.default": ("system", "light", "dark"),
+}
+
 
 def _merge(default, override, path=""):
     """Deep-merge override onto a COPY of default. A value of the wrong type or
@@ -85,6 +95,10 @@ def _merge(default, override, path=""):
                 not isinstance(ov, type(dv)) and not (isinstance(dv, float) and isinstance(ov, int))):
             print(f"warning: config {where}: expected {type(dv).__name__}, using default",
                   file=sys.stderr)
+            out[key] = dv
+        elif where in _CHOICES and ov not in _CHOICES[where]:
+            print(f"warning: config {where}: {ov!r} is not one of "
+                  f"{', '.join(_CHOICES[where])}, using default", file=sys.stderr)
             out[key] = dv
         elif where in _RANGES and not (_RANGES[where][0] <= ov <= _RANGES[where][1]):
             lo, hi = _RANGES[where]
@@ -176,6 +190,18 @@ def selftest():
         assert "nonsense" not in load(extra), "unknown sections are ignored, not merged"
 
         # theme.default is a MODE, not a colour - the colour check must not eat it
+        # a value that is not one of the allowed ones falls back and WARNS,
+        # rather than reaching the dashboard as a silent fallback nobody sees
+        choice = Path(td) / "choice.toml"
+        choice.write_text('[ui]\nview = "mrged"\n')
+        assert load(choice)["ui"]["view"] == "merged", \
+            "a typo'd view must not reach the wall; the default is merged"
+        choice.write_text('[ui]\nview = "flat"\n')
+        assert load(choice)["ui"]["view"] == "flat", "a legal choice still applies"
+        choice.write_text('[theme]\ndefault = "nonsense"\n')
+        assert load(choice)["theme"]["default"] == "system", \
+            "the same check covers the theme mode, which had none"
+
         mode = Path(td) / "mode.toml"
         mode.write_text('[theme]\ndefault = "dark"\n')
         assert load(mode)["theme"]["default"] == "dark", \

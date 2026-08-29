@@ -14,6 +14,9 @@ port = 8731             # dashboard HTTP port
 poll_seconds = 2.0       # how often the dashboard re-reads the log files
 
 [ui]
+view = "merged"         # wall layout: "merged" (one card per project, rows tagged
+                        # with the session that recorded them) or "flat" (one card
+                        # per session file). Press u to switch without editing this.
 columns = 0                                # wall column count; 0 = auto-fit to window width
 drawer_open = true                         # whether the session drawer starts open
 filter_debounce_ms = 100                   # delay before the filter box re-renders as you type
