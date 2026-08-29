@@ -15,8 +15,7 @@
 # It can never break the session it reports on: every failure path exits 0.
 set -u
 dir="${TABLE_TALK_DIR:-$HOME/.local/share/table-talk}/.ref"
-payload=$(cat 2>/dev/null) || exit 0
-prompt=$(printf '%s' "$payload" | jq -r '.prompt // empty' 2>/dev/null) || exit 0
+prompt=$(jq -r '.prompt // empty' 2>/dev/null) || exit 0
 [ -n "$prompt" ] || exit 0
 mkdir -p "$dir" 2>/dev/null || exit 0
 # ponytail: one flat directory of empty files, never pruned. A stray 4-hex word
@@ -28,6 +27,6 @@ mkdir -p "$dir" 2>/dev/null || exit 0
 # one needed and "a6d9 dcc5" recorded only a6d9 - precisely the case where the
 # user answers two actions in one message.
 printf '%s' "$prompt" | grep -woE '[0-9a-f]{4}' 2>/dev/null | sort -u | while read -r id; do
-    touch "$dir/$id" 2>/dev/null || true
+    touch "$dir/$id" 2>/dev/null
 done
 exit 0

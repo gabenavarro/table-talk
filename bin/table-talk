@@ -233,6 +233,12 @@ def blocker(action_id, state_of):
     return action_id
 
 
+def open_actions(states):
+    """Ids of actions still awaiting the user - the set both warnings need."""
+    return {i for i, e in states.items()
+            if e.get("type") == "action" and e.get("status") != "done"}
+
+
 def stale_hundreds(states, skip_id=None):
     """Ids of tasks that say they are finished but were never closed.
 
@@ -249,8 +255,7 @@ def stale_hundreds(states, skip_id=None):
     - never a task blocked on a still-open action, which is a legitimately
       open task at 100% waiting on the user.
     """
-    blocking = {i for i, e in states.items()
-                if e.get("type") == "action" and e.get("status") != "done"}
+    blocking = open_actions(states)
     return sorted(
         i for i, e in states.items()
         if i != skip_id
@@ -259,7 +264,7 @@ def stale_hundreds(states, skip_id=None):
         and e.get("blocked_on") not in blocking)
 
 
-def referenced_open(states, marks):
+def referenced_open(states, marks, skip_id=None):
     """Ids the user has NAMED in a message that are still open actions.
 
     An action the user answered by id and the session never closed is the other
@@ -272,9 +277,7 @@ def referenced_open(states, marks):
     Actions only. A task is not something the user answers, and a `done` action
     drops out by itself, so acting on the warning is what clears it.
     """
-    return sorted(m for m in marks
-                  if (states.get(m) or {}).get("type") == "action"
-                  and states[m].get("status") != "done")
+    return sorted(marks & open_actions(states) - {skip_id})
 
 
 def warn_stale(project, skip_id=None):
@@ -296,16 +299,16 @@ def warn_stale(project, skip_id=None):
             marks = {f.name for f in (DATA_DIR / ".ref").iterdir()}
         except OSError:             # no hook installed, or no prompt yet
             marks = set()
-        named = [i for i in referenced_open(states, marks) if i != skip_id]
+        named = referenced_open(states, marks, skip_id)
     except Exception:               # a nudge must never break a recording
         return
     if ids:
         print(f"note: {', '.join(ids)} at 100% and still open — `table-talk "
-              f"done <id>`, or `progress <id> --blocked-on <action-id>` if it "
-              f"is waiting on the user", file=sys.stderr)
+              "done <id>`, or `progress <id> --blocked-on <action-id>` if it "
+              "is waiting on the user", file=sys.stderr)
     if named:
         print(f"note: {', '.join(named)} named by the user and still open — "
-              f"answer it in this turn and `table-talk done <id>`",
+              "answer it in this turn and `table-talk done <id>`",
               file=sys.stderr)
 
 
