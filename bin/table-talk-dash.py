@@ -480,6 +480,37 @@ def link_spans(text):
     return sorted(urls + paths)
 
 
+# How long a heartbeat counts as current. Generous on purpose: a session can
+# think, or wait on a long command, for well over a minute between tool calls,
+# and calling that dead would be the same lie as calling a stale bar live.
+BEAT_WINDOW = 120
+
+
+def live_sessions(now, beat_dir=None, window=BEAT_WINDOW):
+    """The session codes whose heartbeat is current.
+
+    The heartbeat is written by bin/tt-beat, a PostToolUse hook, because NOTHING
+    in the log can answer "is an agent working right now" - a log records what
+    happened, not what is happening. Absent hook, absent directory, unreadable
+    file: all mean "nobody is known to be working", which is honest rather than
+    a failure, so the wall behaves exactly as it did before for anyone who has
+    not installed it.
+    """
+    beat_dir = Path(beat_dir) if beat_dir else DATA_DIR / ".beat"
+    live = set()
+    try:
+        entries = list(beat_dir.iterdir())
+    except OSError:
+        return live
+    for f in entries:
+        try:
+            if 0 <= now - f.stat().st_mtime < window:
+                live.add(f.name)
+        except OSError:
+            continue
+    return live
+
+
 # How long after a reading a bar keeps pulsing. Five minutes: long enough to
 # cover the gap between a session's steps, short enough that a job nobody has
 # touched since lunch is visibly still.
@@ -1312,6 +1343,23 @@ def selftest():
     assert ".lk-p" in css and ".lk{" in css, \
         "a link run needs its styles, and the inline rule is what keeps a cell one sentence"
 
+    # live_sessions: the only thing that can answer "is an agent working NOW".
+    # Everything about it degrades to "nobody is known to be working", which is
+    # honest for the majority who have not installed the hook.
+    with tempfile.TemporaryDirectory() as td:
+        beats = Path(td) / ".beat"
+        assert live_sessions(1000, beats) == set(), \
+            "no hook installed means no directory, which must be silence, not a crash"
+        beats.mkdir()
+        (beats / "0d2b").touch(); os.utime(beats / "0d2b", (990, 990))
+        (beats / "7e2b").touch(); os.utime(beats / "7e2b", (100, 100))
+        assert live_sessions(1000, beats) == {"0d2b"}, \
+            "a session that has not called a tool in two minutes is not working"
+        (beats / "ffff").touch(); os.utime(beats / "ffff", (5000, 5000))
+        assert "ffff" not in live_sessions(1000, beats), \
+            "a beat from the FUTURE is a clock jump, not a working session"
+    assert BEAT_WINDOW == 120
+
     # live_delay: the pulse's own lifetime encodes the freshness window, because
     # a row repaints only when its data changes - a class set at render time
     # would still claim to be live half an hour later without a repaint.
@@ -1503,6 +1551,13 @@ def selftest():
         "one hardcoded False left the wall starting flat however the file was " \
         "written, and the three sites must agree or the first poll disagrees " \
         "with the toggle"
+    assert 'win["beat"].set_visibility' in code and "beating = live_sessions(now)" in code, \
+        "the heartbeat is applied per poll and OUTSIDE the paint signature: it " \
+        "changes nothing in any session file, so a window would never repaint " \
+        "for it and the marker would be whatever it was when the rows last moved"
+    assert ".beat{visibility:visible}" in css.split("prefers-reduced-motion: reduce){")[1], \
+        "steps(2,start) truncated to one .001ms iteration can freeze on the " \
+        "HIDDEN step, and a live marker that vanishes says the opposite of the truth"
     live = css.split(".blocks.live{")[1].split("}")[0]
     dur, _, iters = live.split("animation:live ")[1].partition(" ease-in-out ")
     assert float(dur.rstrip("s")) * int(iters) == LIVE_WINDOW, \
@@ -1991,6 +2046,7 @@ def main(port=None):
                 mark = ui.label("M").classes("fl-m")
                 zoom = ui.label("Z").classes("fl-z")
                 star = ui.label("*").classes("fl-c")   # current, per the design spec
+                beat = ui.label("◉").classes("beat")   # its session is working NOW
                 when = ui.label("").classes("when")
                 with ui.element("div").classes("wctl"):
                     for act, glyph, tip in (("mark", "M", "Mark (m) — hold at the front"),
@@ -2006,7 +2062,8 @@ def main(port=None):
                 cells = ui.element("div").classes("cells")
                 tally = ui.label("")
         return {"el": el, "body": body, "ix": ix, "bell": bell, "actv": actv, "mark": mark,
-                "zoom": zoom, "star": star, "when": when, "cells": cells, "tally": tally,
+                "zoom": zoom, "star": star, "beat": beat, "when": when, "cells": cells,
+                "tally": tally,
                 "hot": False, "latest": 0, "sig": None}
 
     # project -> its open-action count when we last looked. Persisted, because
@@ -2401,6 +2458,9 @@ def main(port=None):
         # be an action recorded on another day, and resolving it per file would
         # strand that task blocked forever.
         open_acts = frozenset(M.open_action_ids(states.values()))
+        # Outside the paint signature deliberately: a heartbeat changes nothing
+        # in any session file, so a window would never repaint for it.
+        beating = live_sessions(now)
         query = (search.value or "").strip()
         # exactly one cursor on the page: the newest open action anywhere on the wall
         newest, newest_ts = None, -1
@@ -2445,6 +2505,7 @@ def main(port=None):
                 win["sig"] = sig
             # both advance without the window's own data changing: age with the
             # clock, the tmux index whenever a newer sibling session appears
+            win["beat"].set_visibility(session_label(wall_states[k], "") in beating)
             for el, txt in ((win["when"], ago(win["latest"]) if win["latest"] else ""),
                             (win["ix"], f":{session_label(wall_states[k], where[k][1])}")):
                 if el.text != txt:
