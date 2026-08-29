@@ -172,6 +172,18 @@ already shipped, to the byte. `bg` is the theme's background; `surface` and
 `surface-2` are derived, because a terminal has one background where this wall
 has three depths.
 
+Pick one in the config:
+
+```toml
+[theme]
+dark_theme = "Rose Pine"
+light_theme = "Gruvbox Light Hard"
+```
+
+A named theme replaces the base palette and your own `[theme.dark]` tokens
+still win on top, so changing one colour does not mean restating the other
+sixteen. An unknown name warns and keeps the built-in palette.
+
 Every bundled theme is checked against the contrast pairs the stylesheet
 documents. Six pass untouched. The rest are marked `adapted`, naming the exact
 tokens moved: terminal accents are chosen for large glyphs on their own ground,

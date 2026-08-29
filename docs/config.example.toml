@@ -28,7 +28,15 @@ open_command = "xdg-open"  # command used to open a clicked path, e.g. "code" or
 extra_roots = []            # extra directories a clicked path may resolve under
 
 [theme]
-default = "system"  # "system", "dark", or "light"
+default = "system"
+
+# Name a bundled palette from bin/themes.json; "" keeps the built-in one. The
+# [theme.dark] / [theme.light] tokens below still win, so you can take a theme
+# and change a single colour without restating the other sixteen.
+#   dark:  Catppuccin Mocha, Dracula, Everforest Dark Hard, Gruvbox Dark Hard, Kanagawa Wave, Nord, Rose Pine, TokyoNight Night
+#   light: Ayu Light, Catppuccin Latte, Everforest Light Hard, Gruvbox Light Hard, Nord Light, Rose Pine Dawn, TokyoNight Day
+dark_theme = ""
+light_theme = ""  # "system", "dark", or "light"
 
 # Colour tokens below are hex strings (#rgb, #rgba, #rrggbb, #rrggbbaa) fed
 # straight into the stylesheet; override any subset, the rest keep their default.
