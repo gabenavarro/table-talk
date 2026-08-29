@@ -88,7 +88,9 @@ two seconds.
   each has to say. A titlebar reads `project:session` — the code of the agent
   session that wrote the file last, or its index for older files — and
   carries tmux's flags — `!` open actions, `#` jobs running, `M` marked,
-  `Z` zoomed, `*` current — over sections for actions, jobs, diagrams,
+  `Z` zoomed, `*` current, `◉` its session is working right now. The session
+  code opens that session's own Claude Code transcript when one can be
+  resolved. Over sections for actions, jobs, diagrams,
   glossary and done, and a footer tallying what is resolved. Every section
   collapses, and a shut one keeps a █/░ bar reporting what it holds. Progress
   text is read for a percentage and drawn as a bar, which pulses for five

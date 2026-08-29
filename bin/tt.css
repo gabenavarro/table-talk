@@ -162,7 +162,12 @@ body{background:var(--bg);color:var(--ink);margin:0}
 .win-t{display:flex;align-items:center;gap:6px;padding:5px 9px;background:var(--surface-2);
   border-bottom:1px solid var(--rule);font-size:11.5px}
 .win-t .nm{color:var(--ink);font-weight:700}
-.win-t .ix{color:var(--ink-3)}
+/* the session code opens its own conversation when one can be resolved; it is
+   a button either way, so the affordance does not flicker in and out */
+.win-t .ix{border:0;background:transparent;font:inherit;color:var(--ink-3);
+  padding:0;cursor:pointer}
+.win-t .ix:hover{color:var(--caret)}
+.win-t .ix:focus-visible{outline:2px solid var(--caret);outline-offset:1px}
 /* steps(2,start), not ease-in-out: an opacity tween DWELLS near its trough, and
    the trough was unreadable - .45 read 1.75:1 on .win-t and 1.62:1 on .win.cur's
    tint (dark), 2.05:1 / 2.03:1 (light), all under the 3:1 floor the peak itself
