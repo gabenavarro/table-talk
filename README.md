@@ -133,6 +133,10 @@ lives beside the logs in `~/.local/share/table-talk/.ui/`, so it follows the
 data rather than the directory you launched from. (Before v5 it landed in a
 `.nicegui/` folder beside the launch directory; those are safe to delete.)
 
+The drawer's footer has a **settings** entry that opens this file in your
+`links.open_command`, creating it from the documented example the first time —
+a fresh install has no config at all and runs on the defaults below.
+
 `~/.config/table-talk/config.toml` (or point `TABLE_TALK_CONFIG` at another
 file) sets the port, poll interval, columns, drawer state, theme, and
 `links.open_command` — the command used to open a clicked file path in your
