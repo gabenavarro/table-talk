@@ -597,6 +597,58 @@ def restart_offer(running_port, config_port, explicit):
     return True, f"config asks for port {config_port}; restart to move there?"
 
 
+RESTART_KEYS = ("server.host", "server.port")
+
+
+def form_updates(current, submitted):
+    """Only the settings that actually CHANGED, as {"section.key": value}.
+
+    `current` is the LOADED config, so every default is present in it whether
+    or not the file mentions it. Writing back everything the form showed would
+    therefore materialise every default as an explicit line the user never
+    chose, turning a short file into a long one on the first save.
+    """
+    out = {}
+    for dotted, value in submitted.items():
+        section, _, key = dotted.rpartition(".")
+        if value is None:
+            continue
+        if current.get(section, {}).get(key) != value:
+            out[dotted] = value
+    return out
+
+
+def needs_restart(changed):
+    """Which saved settings only take effect on a fresh process.
+
+    The rest are read on every poll, so they apply as soon as they are saved.
+    Host and port are handed to ui.run() once, at startup, and nothing can move
+    a listening socket afterwards.
+    """
+    return sorted(k for k in changed if k in RESTART_KEYS)
+
+
+def coerce(kind, bounds, value, like):
+    """A form value in the type the config expects, or None to leave it alone.
+
+    Typed from `like` - the value currently loaded - and NOT from the bounds. A
+    number widget hands back a float for everything, and the loader drops a
+    value whose type does not match its default, so the setting would silently
+    not take. Bounds are the wrong source for this: filter_debounce_ms is an
+    int whose range is (0, inf), and inf is a float.
+    """
+    if kind != "number":
+        return value
+    try:
+        num = float(value)
+    except (TypeError, ValueError):
+        return None
+    lo, hi = bounds
+    if not (lo <= num <= hi):
+        return None
+    return float(num) if isinstance(like, float) else int(num)
+
+
 def ensure_config(path=None, example=None):
     """The config file, created from the documented example if it is missing.
 
@@ -1650,15 +1702,58 @@ def selftest():
         "open_acts is in the paint signature: a window must repaint when its " \
         "blocker is answered, which changes nothing in its own file"
     assert ".blk" in css, "a blocked task needs to look different from a running one"
-    assert 'ctx.append(("settings", cfg_path))' in code, \
-        "every setting the wall obeys lives in a file the user had no way to " \
-        "reach from the dashboard, and that a normal install does not even have"
+    assert 'ctx.append(("settings file", cfg_path))' in code, \
+        "the raw file must stay one click away even now the form exists: " \
+        "colour tokens and extra_roots are not in the form, and a normal " \
+        "install does not otherwise have this file at all"
     assert 'ui.run(host=host,' in code and 'host = cfg["server"]["host"]' in code, \
         "the configured host must reach the BIND: hardcoded, the option is " \
         "documented, validated, and does absolutely nothing"
     assert 'if host != "127.0.0.1":' in code and "no password" in code, \
         "binding beyond localhost must SAY so where it happens - this page " \
         "has no login, and the user is trusting a config line they wrote once"
+    # The settings form: pure logic first, wiring pinned by source.
+    _cur = {"server": {"host": "127.0.0.1", "port": 8731},
+            "ui": {"view": "merged", "filter_debounce_ms": 100}}
+    assert form_updates(_cur, {"server.host": "127.0.0.1",
+                               "ui.view": "merged"}) == {}, \
+        "a save must write ONLY what changed: the form shows every default " \
+        "whether the file mentions it or not, so writing back all of it turns " \
+        "a short commented file into a long one full of values nobody chose"
+    assert form_updates(_cur, {"server.host": "0.0.0.0"}) == {"server.host": "0.0.0.0"}
+    assert form_updates(_cur, {"server.port": None}) == {}, \
+        "a field that failed to coerce is left ALONE, never written as null"
+    assert needs_restart({"server.host": "0.0.0.0", "ui.view": "flat"}) == ["server.host"], \
+        "host and port reach ui.run() once at startup and nothing can move a " \
+        "listening socket after; the rest are re-read on every poll"
+    assert needs_restart({"ui.view": "flat"}) == [], \
+        "and a setting that applies immediately must not demand a restart"
+    assert coerce("number", (1, 65535), "8731.0", 8731) == 8731 and \
+           isinstance(coerce("number", (1, 65535), "8731.0", 8731), int), \
+        "a number widget hands back a float for everything, and the loader " \
+        "DROPS a value whose type does not match its default - 8731.0 in the " \
+        "file is a port that silently does not take"
+    assert coerce("number", (0, float("inf")), 150.0, 100) == 150 and \
+           isinstance(coerce("number", (0, float("inf")), 150.0, 100), int), \
+        "the type comes from the current VALUE, not the bounds: " \
+        "filter_debounce_ms is an int whose range ends at inf, and inf is a float"
+    assert isinstance(coerce("number", (0.2, float("inf")), 2.5, 2.0), float), \
+        "and a genuinely float setting stays a float"
+    assert coerce("number", (0, 3), 99, 0) is None, \
+        "out of range coerces to None so the save leaves it alone, rather " \
+        "than writing a value load() will reject with a warning nobody reads"
+    assert coerce("choice", None, "flat", "merged") == "flat", "choices pass through"
+    assert "tt_config.form_fields()" in code, \
+        "the form's fields must come from the VALIDATOR, never a second list " \
+        "in the UI that drifts from what load() will actually accept"
+    assert "tt_config.set_keys(cfg_path, changed)" in code, \
+        "and saving must go through the comment-preserving writer, not a dump"
+    assert 'btn.on("click", lambda _: open_settings(cfg_path))' in code, \
+        "the drawer's settings button must open the FORM: this whole feature " \
+        "exists because opening the raw file let a stale config hide the themes"
+    assert ".cfg-row" in css and ".cfg{" in css, \
+        "the form needs its own styling in the sheet, or it renders as " \
+        "unthemed browser defaults inside a themed app"
     assert 'ctx.append(("settings ref", ref))' in code, \
         "the drawer must offer the CURRENT documented example: a user's own " \
         "config froze on the day it was created, so every option added since " \
@@ -1958,7 +2053,16 @@ def main(port=None):
                 # Settings last: it is the one entry that is always present,
                 # because unlike the others it CREATES its file when missing.
                 if (cfg_path := ensure_config()):
-                    ctx.append(("settings", cfg_path))
+                    # A FORM for the settings a form can validate; the file
+                    # itself stays one click away, because colour tokens and
+                    # extra_roots belong there and a picker for seventeen
+                    # tokens across two modes is a different project.
+                    btn = ui.element("button").classes("lk dw-ctx-i")
+                    btn.props["title"] = "edit settings"
+                    with btn:
+                        ui.label("settings")
+                    btn.on("click", lambda _: open_settings(cfg_path))
+                    ctx.append(("settings file", cfg_path))
                     # The current documented example, refreshed on every start.
                     # Without it the only reference a user has is their own
                     # file, which froze on the day it was created.
@@ -2066,6 +2170,56 @@ def main(port=None):
             return
         logging.info("restarting onto port %s", want)
         os.execv(sys.executable, [sys.executable, str(Path(__file__).resolve())])
+
+    def open_settings(cfg_path):
+        """The settings form: every field derived from the validators."""
+        cur = tt_config.load(cfg_path)
+        widgets = {}
+        with ui.dialog() as dlg, ui.element("div").classes("cfg"):
+            ui.label("settings").classes("cfg-h")
+            for dotted, kind, spec in tt_config.form_fields():
+                section, _, key = dotted.rpartition(".")
+                now = cur.get(section, {}).get(key)
+                with ui.element("div").classes("cfg-row"):
+                    ui.label(dotted).classes("cfg-k")
+                    if kind == "choice":
+                        w = ui.select(list(spec), value=now)
+                    else:
+                        lo, hi = spec
+                        w = ui.number(value=now, min=lo,
+                                      max=None if hi == float("inf") else hi)
+                    widgets[dotted] = (w, kind, spec, now)
+            msg = ui.label("").classes("cfg-msg")
+            with ui.element("div").classes("cfg-act"):
+                save = ui.element("button").classes("lk")
+                with save:
+                    ui.label("save")
+                shut = ui.element("button").classes("lk")
+                with shut:
+                    ui.label("close")
+                shut.on("click", lambda _: dlg.close())
+
+        def do_save(_):
+            sub = {d: coerce(k, sp, w.value, now)
+                   for d, (w, k, sp, now) in widgets.items()}
+            changed = form_updates(cur, sub)
+            if not changed:
+                msg.set_text("nothing changed")
+                return
+            ok, why = tt_config.set_keys(cfg_path, changed)
+            if not ok:
+                msg.set_text(why)
+                return
+            later = needs_restart(changed)
+            msg.set_text(f"saved {', '.join(sorted(changed))}"
+                         + (f" - {', '.join(later)} needs a restart"
+                            if later else ""))
+            if later:
+                port_msg.set_text(f"{', '.join(later)} changed; restart to apply")
+                port_go.set_visibility(True)
+
+        save.on("click", do_save)
+        dlg.open()
 
     def cycle_theme():
         nonlocal mode

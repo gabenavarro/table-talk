@@ -455,3 +455,15 @@ body{background:var(--bg);color:var(--ink);margin:0}
   .bell{visibility:visible}
   .beat{visibility:visible}
 }
+
+/* The settings form. Tokens only, so it follows whatever theme is loaded -
+   including a bundled one; a dialog hardcoding its own colours would be the
+   one surface in the app that ignores the palette the user chose. */
+.cfg{background:var(--surface);color:var(--ink);padding:14px 16px;
+     border:1px solid var(--rule);min-width:340px;max-width:92vw}
+.cfg-h{font-weight:600;margin-bottom:10px;color:var(--ink)}
+.cfg-row{display:flex;align-items:center;gap:10px;margin:4px 0}
+.cfg-k{flex:1;color:var(--ink-2);font-size:12px}
+.cfg-row .q-field{min-width:170px}
+.cfg-msg{margin-top:10px;color:var(--ink-2);font-size:12px;min-height:1em}
+.cfg-act{display:flex;gap:14px;margin-top:8px;justify-content:flex-end}
