@@ -41,7 +41,11 @@ DEFAULTS = {
     # so the wrong default there presents as links that are simply decorative.
     "links": {"open_command": "open" if sys.platform == "darwin" else "xdg-open",
               "extra_roots": []},
-    "theme": {"default": "system", "dark": _DARK, "light": _LIGHT},
+    # dark_theme / light_theme name a palette from bin/themes.json; "" keeps the
+    # built-in one. The token tables below still win, so a user can take a theme
+    # and change one colour without restating the other sixteen.
+    "theme": {"default": "system", "dark_theme": "", "light_theme": "",
+              "dark": _DARK, "light": _LIGHT},
 }
 
 
@@ -123,7 +127,27 @@ def load(path=None):
     except (tomllib.TOMLDecodeError, OSError, UnicodeDecodeError) as e:
         print(f"warning: config {p}: {e}; using defaults", file=sys.stderr)
         raw = {}
-    return _merge(DEFAULTS, raw)
+    cfg = _merge(DEFAULTS, raw)
+    # A named theme replaces the BASE palette, then the file's own tokens are
+    # re-applied on top - so naming a theme and overriding one colour does what
+    # it looks like. An unknown name warns and keeps the built-in palette, the
+    # way every other unrecognised value here does, rather than reaching the
+    # dashboard as a silent fallback nobody learns about.
+    bundle = themes()
+    for mode in ("dark", "light"):
+        name = cfg["theme"].get(f"{mode}_theme")
+        if not name:
+            continue
+        if name not in bundle:
+            print(f"warning: config theme.{mode}_theme: {name!r} is not a bundled "
+                  f"theme, using the built-in palette", file=sys.stderr)
+            cfg["theme"][f"{mode}_theme"] = ""
+            continue
+        picked = dict(bundle[name]["tokens"])
+        picked.update({k: v for k, v in (raw.get("theme", {}).get(mode) or {}).items()
+                       if k in picked and valid_colour(v)})
+        cfg["theme"][mode] = picked
+    return cfg
 
 
 THEMES_PATH = Path(__file__).with_name("themes.json")
@@ -242,6 +266,33 @@ def selftest():
         extra = Path(td) / "extra.toml"
         extra.write_text('[nonsense]\nkey = 1\n')
         assert "nonsense" not in load(extra), "unknown sections are ignored, not merged"
+
+        # Naming a bundled theme replaces the base palette; the file's own
+        # tokens still win, so one colour can be changed without restating
+        # the other sixteen.
+        pick = Path(td) / "pick.toml"
+        pick.write_text('[theme]\ndark_theme = "Dracula"\n')
+        got = load(pick)["theme"]["dark"]
+        assert got == _bundled["Dracula"]["tokens"], "a named theme replaces the base"
+        assert got != DEFAULTS["theme"]["dark"], "and it is really different from built-in"
+        pick.write_text('[theme]\ndark_theme = "Dracula"\n\n[theme.dark]\ncaret = "#ff00ff"\n')
+        got = load(pick)["theme"]["dark"]
+        assert got["caret"] == "#ff00ff", "an explicit token still wins over the theme"
+        assert got["act"] == _bundled["Dracula"]["tokens"]["act"], \
+            "and overriding one colour must not discard the other sixteen"
+        pick.write_text('[theme]\ndark_theme = "Nonesuch"\n')
+        assert load(pick)["theme"]["dark"] == DEFAULTS["theme"]["dark"], \
+            "an unknown theme name warns and keeps the built-in palette, rather " \
+            "than reaching the dashboard as a silent fallback"
+        pick.write_text('[theme]\nlight_theme = "Catppuccin Latte"\n')
+        both = load(pick)["theme"]
+        assert both["light"] == _bundled["Catppuccin Latte"]["tokens"]
+        assert both["dark"] == DEFAULTS["theme"]["dark"], \
+            "naming one mode's theme must not disturb the other"
+        pick.write_text('[theme]\ndark_theme = "Dracula"\n\n[theme.dark]\ncaret = "red"\n')
+        assert load(pick)["theme"]["dark"]["caret"] == _bundled["Dracula"]["tokens"]["caret"], \
+            "a non-hex override is dropped here too; this is a second route " \
+            "into the stylesheet and gets the same gate"
 
         # theme.default is a MODE, not a colour - the colour check must not eat it
         # a value that is not one of the allowed ones falls back and WARNS,
