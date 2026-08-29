@@ -128,6 +128,35 @@ buttons on each titlebar, and the filter box itself — and every click has a
 keyboard equivalent: section headers and the drawer's fold triangle take Tab
 and Enter, so nothing on this page needs a pointer or a key alone.
 
+## Is anything actually happening?
+
+A progress bar pulses for five minutes after a reading was taken, then goes
+still. That says *recent*, not *working* — a log records what happened, never
+what is happening.
+
+For a true signal, install the heartbeat hook. `bin/tt-beat` is a
+`PostToolUse` hook: it reads the hook payload, takes the first four characters
+of the session id — the same `sid` the CLI stamps on every event — and touches
+a file. A window whose session called a tool in the last two minutes shows a
+`◉` in its titlebar.
+
+Add to `~/.claude/settings.json` (needs `jq`):
+
+```json
+{
+  "hooks": {
+    "PostToolUse": [
+      { "matcher": "", "hooks": [
+        { "type": "command", "command": "/absolute/path/to/table-talk/bin/tt-beat", "timeout": 5 }
+      ] }
+    ]
+  }
+}
+```
+
+Without it nothing changes: no directory, no heartbeats, no markers. The hook
+exits 0 on every failure path, so it can never break the session it reports on.
+
 ## Configuration
 
 UI state — theme, marks, folds, scope, sort and what you have already seen —

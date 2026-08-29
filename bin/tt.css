@@ -170,6 +170,9 @@ body{background:var(--bg);color:var(--ink);margin:0}
    now either its full peak contrast (unchanged - see :157-158) or ABSENT, never
    a low-contrast smear, and never needs a keyframes block of its own. */
 .bell{color:var(--act);font-weight:800;animation:blink 2.2s steps(2,start) infinite}
+/* its session called a tool within BEAT_WINDOW: the one thing on this page
+   that means "right now" rather than "recently" */
+.beat{color:var(--ok);font-weight:800;animation:blink 1.6s steps(2,start) infinite}
 .actv{color:var(--job);font-weight:800}
 .fl-m{color:var(--caret);font-weight:800}
 .fl-z{color:var(--gls);font-weight:800}
@@ -445,4 +448,5 @@ body{background:var(--bg);color:var(--ink);margin:0}
   .cursor{visibility:visible}
   .blocks.live{opacity:1}
   .bell{visibility:visible}
+  .beat{visibility:visible}
 }

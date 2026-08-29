@@ -1,0 +1,19 @@
+#!/bin/sh
+# A Claude Code PostToolUse hook: record that this session is alive, right now.
+#
+# Runs on EVERY tool call, and Claude Code waits for every matching hook before
+# the next turn, so this must stay cheap: one jq, one touch, no Python. It reads
+# the hook payload on stdin (session_id is NOT available as an environment
+# variable - verified against the docs) and touches a file named for the first
+# four characters of the session, which is exactly the `sid` the CLI already
+# stamps on every event, so the dashboard can join the two without a lookup.
+#
+# It can never break the session it reports on: every failure path exits 0, and
+# nothing it writes is read by anything that must succeed.
+set -u
+dir="${TABLE_TALK_DIR:-$HOME/.local/share/table-talk}/.beat"
+sid=$(jq -r '.session_id // empty' 2>/dev/null | cut -c1-4)
+[ -n "$sid" ] || exit 0
+mkdir -p "$dir" 2>/dev/null || exit 0
+touch "$dir/$sid" 2>/dev/null || exit 0
+exit 0
