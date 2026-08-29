@@ -141,24 +141,40 @@ can see by itself, so every recording command checks for it and prints a note.
 It stays quiet for a task that is `done`, for the id you just wrote, and for
 one blocked on a still-open action.
 
-For a true signal, install the heartbeat hook. `bin/tt-beat` is a
-`PostToolUse` hook: it reads the hook payload, takes the first four characters
-of the session id — the same `sid` the CLI stamps on every event — and touches
-a file. A window whose session called a tool in the last two minutes shows a
-`◉` in its titlebar.
+For anything beyond that the log is not enough, and two hooks supply what it
+cannot see:
 
-`./install.sh` sets it up for you. It merges the hook into
-`~/.claude/settings.json`, keeping everything already there and backing the
-file up first, and re-running it changes nothing. To skip it — the hook fires
-in *every* project, not only this one — install with `./install.sh --no-hook`.
+| Hook | Event | What it records |
+|---|---|---|
+| `bin/tt-beat` | `PostToolUse` | The first four characters of the session id — the same `sid` the CLI stamps on every event. A window whose session called a tool in the last two minutes shows a `◉` in its titlebar. |
+| `bin/tt-ref` | `UserPromptSubmit` | Every standalone 4-hex word in your message. An action you answered by id that the session never closed then gets named on the next recording command. |
+
+Both do the same small thing: read the payload on stdin and touch an empty
+file. Neither reads or writes the event log — a hook appending JSONL on every
+prompt could corrupt a file the dashboard folds, and touching an empty file
+cannot fail halfway. `tt-ref` records *every* 4-hex word rather than deciding
+what is an id, because deciding means folding the log; the CLI does the join at
+warn time, and a marker matching no open action is ignored.
+
+`./install.sh` sets both up. It merges them into `~/.claude/settings.json`,
+keeping everything already there and backing the file up first, and re-running
+it changes nothing — so an existing install picks up a newly added hook simply
+by running it again. To skip them — they fire in *every* project, not only this
+one — install with `./install.sh --no-hook`.
 
 ```sh
-table-talk install-hook            # add it later, or after --no-hook
-table-talk install-hook --remove   # take it out again
+table-talk install-hook            # add them later, or after --no-hook
+table-talk install-hook --remove   # take them out again
 ```
 
-Without it nothing changes: no directory, no heartbeats, no markers. The hook
-exits 0 on every failure path, so it can never break the session it reports on.
+Both need `jq`, and the installer warns if it is missing rather than leaving
+them to no-op in silence. Without them nothing changes: no directory, no
+heartbeats, no markers. Every failure path exits 0, so neither can break the
+session it reports on.
+
+Two things `tt-ref` cannot do. It sees a *reference*, not an answer — asking
+"what is `a6d9` about?" flags it too, which is still a moment worth acting on.
+And it sees nothing when you answer with no id at all ("yes, do it").
 
 ## Themes
 

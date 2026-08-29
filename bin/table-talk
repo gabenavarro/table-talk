@@ -233,6 +233,12 @@ def blocker(action_id, state_of):
     return action_id
 
 
+def open_actions(states):
+    """Ids of actions still awaiting the user - the set both warnings need."""
+    return {i for i, e in states.items()
+            if e.get("type") == "action" and e.get("status") != "done"}
+
+
 def stale_hundreds(states, skip_id=None):
     """Ids of tasks that say they are finished but were never closed.
 
@@ -249,14 +255,52 @@ def stale_hundreds(states, skip_id=None):
     - never a task blocked on a still-open action, which is a legitimately
       open task at 100% waiting on the user.
     """
-    blocking = {i for i, e in states.items()
-                if e.get("type") == "action" and e.get("status") != "done"}
+    blocking = open_actions(states)
     return sorted(
         i for i, e in states.items()
         if i != skip_id
         and e.get("type") == "task" and e.get("status") != "done"
         and isinstance(e.get("pct"), int) and e.get("pct") == 100
         and e.get("blocked_on") not in blocking)
+
+
+def referenced_open(states, marks, skip_id=None):
+    """Ids the user has NAMED in a message that are still open actions.
+
+    An action the user answered by id and the session never closed is the other
+    half of the drift stale_hundreds catches, and the log cannot see it: nothing
+    in a log knows a message answered something. The tt-ref hook supplies what
+    the log cannot, and this is only the join - a marker matching no open action
+    of this project is ignored, which is what lets the hook stay dumb enough to
+    be safe (it records every 4-hex word it sees, real id or not).
+
+    Actions only. A task is not something the user answers, and a `done` action
+    drops out by itself, so acting on the warning is what clears it.
+    """
+    return sorted(marks & open_actions(states) - {skip_id})
+
+
+def unchanged(path, raw):
+    """True if `path` still holds exactly the text we read into `raw`.
+
+    Claude Code writes settings.json itself (/permissions, /model). A lock
+    cannot help - the other writer does not take one - but re-reading before
+    the replace turns a silently lost update into a re-run.
+    """
+    return not path.exists() or path.read_text() == raw
+
+
+def project_of_id(id_):
+    """The project an id lives in, from the stem `YYYY-MM-DD-<project>`.
+
+    progress and done resolve an id across EVERY project, so the cwd's basename
+    is not necessarily the project the item belongs to. Warning about the cwd
+    silently skipped the very moment the check exists for - a task set to 100%
+    from a directory whose name did not match its project.
+    """
+    f = find_file_with_id(id_) if id_ else None
+    parts = f.stem.split("-", 3) if f else []
+    return parts[3] if len(parts) == 4 else None
 
 
 def warn_stale(project, skip_id=None):
@@ -274,12 +318,21 @@ def warn_stale(project, skip_id=None):
         for path in sorted(DATA_DIR.glob(f"*-{stem}.jsonl")):
             states.update(fold(path))
         ids = stale_hundreds(states, skip_id)
+        try:
+            marks = {f.name for f in (DATA_DIR / ".ref").iterdir()}
+        except OSError:             # no hook installed, or no prompt yet
+            marks = set()
+        named = referenced_open(states, marks, skip_id)
     except Exception:               # a nudge must never break a recording
         return
     if ids:
         print(f"note: {', '.join(ids)} at 100% and still open — `table-talk "
-              f"done <id>`, or `progress <id> --blocked-on <action-id>` if it "
-              f"is waiting on the user", file=sys.stderr)
+              "done <id>`, or `progress <id> --blocked-on <action-id>` if it "
+              "is waiting on the user", file=sys.stderr)
+    if named:
+        print(f"note: {', '.join(named)} named by the user and still open — "
+              "answer it in this turn and `table-talk done <id>`",
+              file=sys.stderr)
 
 
 def _lookup(id_):
@@ -345,33 +398,39 @@ def update(id_, fields):
 
 SETTINGS_PATH = Path.home() / ".claude" / "settings.json"
 
+# Both hooks this repo ships, and the Claude Code event each one answers.
+# tt-beat says a session is alive; tt-ref says which ids the user just named.
+HOOKS = (("PostToolUse", "tt-beat"), ("UserPromptSubmit", "tt-ref"))
+
 
 def hook_entry(command):
-    """The PostToolUse entry that runs `command` on every tool call."""
+    """The entry that runs `command`, matching every tool / every prompt."""
     return {"matcher": "", "hooks": [{"type": "command", "command": command,
                                       "timeout": 5}]}
 
 
-def edit_hooks(settings, command, remove=False):
-    """settings dict -> (new dict, what changed).
+def edit_hooks(settings, event, command, remove=False):
+    """settings dict -> (new dict, what changed), for one hook EVENT.
 
     MERGE, never overwrite: this file holds the user's permissions, model
     choice and plugins, and clobbering it would be far worse than the feature
     is worth. Idempotent, so re-running the installer cannot accumulate
     duplicates - identity is the command string, which is this checkout's own
-    absolute path, so two clones do not fight over one entry.
+    absolute path, so two clones do not fight over one entry. Taking the event
+    as an argument is what lets one installer own both hooks and lets an
+    existing install pick up a new one simply by being re-run.
     """
     out = json.loads(json.dumps(settings))          # never mutate the caller's
     events = out.setdefault("hooks", {})
-    entries = events.setdefault("PostToolUse", [])
+    entries = events.setdefault(event, [])
     has = [e for e in entries if any(h.get("command") == command
                                      for h in (e.get("hooks") or []))]
     if remove:
         if not has:
             return settings, "not installed"
-        events["PostToolUse"] = [e for e in entries if e not in has]
-        if not events["PostToolUse"]:
-            events.pop("PostToolUse")
+        events[event] = [e for e in entries if e not in has]
+        if not events[event]:
+            events.pop(event)
         if not events:
             out.pop("hooks")
         return out, "removed"
@@ -389,38 +448,59 @@ def cmd_install_hook(remove=False, path=None):
     just this tool.
     """
     p = Path(path) if path else SETTINGS_PATH
-    beat = str(Path(__file__).resolve().parent / "tt-beat")
+    if p.is_symlink():
+        # os.replace() would swap the LINK for a plain file, leaving the real
+        # file (and whatever dotfile manager tracks it) silently stale.
+        p = p.resolve()
+    here = Path(__file__).resolve().parent
     try:
-        current = json.loads(p.read_text()) if p.exists() else {}
+        raw = p.read_text() if p.exists() else ""
+        current = json.loads(raw) if raw else {}
     except (OSError, ValueError) as e:
         sys.exit(f"error: cannot read {p}: {e}\nfix or move it, then re-run - "
                  "this file is not something to overwrite blindly")
     if not isinstance(current, dict):
         sys.exit(f"error: {p} is not a JSON object; refusing to touch it")
-    new, what = edit_hooks(current, beat, remove)
+    new, done = current, []
+    try:
+        for event, name in HOOKS:
+            new, what = edit_hooks(new, event, str(here / name), remove)
+            done.append((name, what))
+    except (AttributeError, TypeError) as e:
+        # A hand-edited or plugin-written `hooks` of the wrong shape reached us.
+        # Refuse: the promise three lines up is that this file is not something
+        # to overwrite blindly, and a traceback is not a refusal.
+        sys.exit(f"error: {p} has a `hooks` section this tool does not "
+                 f"understand ({e}); fix it by hand, then re-run")
     if new is current:
-        print(f"heartbeat hook: {what}")
+        for name, what in done:
+            print(f"{name}: {what}")
         return
     try:
         p.parent.mkdir(parents=True, exist_ok=True)
         if p.exists():
             backup = p.with_suffix(".json.table-talk.bak")
-            if not backup.exists():
+            # is_file, not exists: a DIRECTORY at this path reads as "already
+            # backed up" and the only copy of the real config is never written.
+            if not backup.is_file():
                 backup.write_text(p.read_text())
                 print(f"backed up your settings to {backup}")
+        if not unchanged(p, raw):
+            sys.exit(f"error: {p} changed while this ran; nothing was written. "
+                     "re-run to pick up both changes")
         tmp = p.with_suffix(".json.tt-tmp")
         tmp.write_text(json.dumps(new, indent=2) + "\n")
         os.replace(tmp, p)          # atomic: a half-written settings.json
     except OSError as e:            # would break every Claude Code session
         sys.exit(f"error: cannot write {p}: {e}")
-    print(f"heartbeat hook: {what} ({beat})")
-    if what == "installed" and not shutil.which("jq"):
-        print("warning: jq is not installed, so the hook will do nothing "
+    for name, what in done:
+        print(f"{name}: {what} ({here / name})")
+    if any(w == "installed" for _, w in done) and not shutil.which("jq"):
+        print("warning: jq is not installed, so the hooks will do nothing "
               "silently - install jq to get heartbeats", file=sys.stderr)
-    if what == "installed":
-        print("it runs on every tool call in every project, exits 0 whatever "
-              "happens, and costs about 8 ms.\nremove it with: table-talk "
-              "install-hook --remove")
+    if any(w == "installed" for _, w in done):
+        print("they run in every project, exit 0 whatever happens, and cost a "
+              "few ms.\nremove them with: table-talk install-hook --remove")
 
 
 def cmd_show(project, open_only=False, mine=False):
@@ -507,7 +587,7 @@ def cmd_serve(port, force=False):
 
 
 def selftest():
-    import tempfile, io, contextlib
+    import tempfile, io, contextlib, subprocess
     global DATA_DIR
     with tempfile.TemporaryDirectory() as td:
         DATA_DIR = Path(td)
@@ -827,9 +907,11 @@ def selftest():
     code = src.split("def selftest():")[0] + src.split("\ndef main(", 1)[1]
     assert "flowchart LR" not in code, \
         "the CLI help must not offer the orientation the skill forbids"
-    assert "warn_stale(getattr(args, \"project\", None)," in code, \
-        "the nudge must fire from main() after a recording command: defined " \
-        "and never called, it catches exactly nothing"
+    assert "dict.fromkeys([project_of_id(_id)," in code and "warn_stale(_proj" in code, \
+        "the nudge must fire from main() for BOTH the item's project and this " \
+        "session's: defined and never called it catches nothing, the cwd's " \
+        "alone skips the item just touched, and the item's alone skips every " \
+        "other stale row in the project being reported on"
     assert dashboard_url().startswith("http://127.0.0.1:") and dashboard_url().endswith("/")
     assert "9500" in serve_refusal({"CLAUDECODE": "1"}, False, url="http://127.0.0.1:9500/"), \
         "the refusal names the port the dashboard is ACTUALLY on: hardcoded, it " \
@@ -844,7 +926,7 @@ def selftest():
     # destroying that file.
     keep = {"model": "opus", "permissions": {"allow": ["Bash"]},
             "hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": []}]}}
-    got, what = edit_hooks(keep, "/x/tt-beat")
+    got, what = edit_hooks(keep, "PostToolUse", "/x/tt-beat")
     assert what == "installed" and got["model"] == "opus" \
         and got["permissions"] == {"allow": ["Bash"]} \
         and got["hooks"]["PreToolUse"] == keep["hooks"]["PreToolUse"], \
@@ -858,23 +940,23 @@ def selftest():
         and got["hooks"]["PostToolUse"][0]["matcher"] == "", \
         "the entry must match Claude Code's hook schema, or it is ignored " \
         "silently and the wall never shows a heartbeat"
-    again, what = edit_hooks(got, "/x/tt-beat")
+    again, what = edit_hooks(got, "PostToolUse", "/x/tt-beat")
     assert what == "already installed" and again is got, \
         "re-running the installer must not stack duplicate hooks - every tool " \
         "call would then pay for the beat twice"
-    other, what = edit_hooks(got, "/other/checkout/tt-beat")
+    other, what = edit_hooks(got, "PostToolUse", "/other/checkout/tt-beat")
     assert what == "installed" and len(other["hooks"]["PostToolUse"]) == 2, \
         "identity is the command path, so a second checkout installs its own"
-    gone, what = edit_hooks(got, "/x/tt-beat", remove=True)
+    gone, what = edit_hooks(got, "PostToolUse", "/x/tt-beat", remove=True)
     assert what == "removed" and "PostToolUse" not in gone.get("hooks", {}) \
         and gone["model"] == "opus", \
         "--remove must take out only our entry and leave the rest of the file"
     assert "hooks" in gone and "PreToolUse" in gone["hooks"], \
         "removing our hook must not drop the user's OTHER hooks with it"
-    empty, what = edit_hooks({}, "/x/tt-beat", remove=True)
+    empty, what = edit_hooks({}, "PostToolUse", "/x/tt-beat", remove=True)
     assert what == "not installed" and empty == {}, \
         "removing what was never installed must leave the file untouched"
-    tidy, _ = edit_hooks(edit_hooks({}, "/x/tt-beat")[0], "/x/tt-beat", remove=True)
+    tidy, _ = edit_hooks(edit_hooks({}, "PostToolUse", "/x/tt-beat")[0], "PostToolUse", "/x/tt-beat", remove=True)
     assert tidy == {}, "removal leaves no empty scaffolding behind"
     # The write path itself, on a real file: a backup exists before the first
     # change, and a second run neither duplicates nor re-backs-up.
@@ -906,6 +988,196 @@ def selftest():
         "tt-beat parses its payload with jq, so installing the hook on a box " \
         "without jq must warn: otherwise it no-ops silently and the wall just " \
         "never shows a heartbeat, with nothing anywhere saying why"
+    # edit_hooks is per-EVENT: one installer owns both hooks, and touching one
+    # must not disturb the other.
+    two, _ = edit_hooks(edit_hooks({}, "PostToolUse", "/x/tt-beat")[0],
+                        "UserPromptSubmit", "/x/tt-ref")
+    assert set(two["hooks"]) == {"PostToolUse", "UserPromptSubmit"}, \
+        "the two hooks answer DIFFERENT events - collapsing them onto one " \
+        "would mean the prompt hook never fires, or fires on every tool call"
+    only, what = edit_hooks(two, "UserPromptSubmit", "/x/tt-ref", remove=True)
+    assert what == "removed" and set(only["hooks"]) == {"PostToolUse"}, \
+        "removing one hook must leave the other installed and working"
+    assert edit_hooks(two, "UserPromptSubmit", "/x/tt-beat")[1] == "installed", \
+        "identity is (event, command): the same command under a different " \
+        "event is a different hook, not an already-installed one"
+
+    assert dict(HOOKS) == {"PostToolUse": "tt-beat",
+                           "UserPromptSubmit": "tt-ref"}, \
+        "both hooks must ship: tt-beat alone is what shipped before, and " \
+        "dropping tt-ref here disables the whole referenced-action check " \
+        "with nothing else failing to say so"
+    for _, _name in HOOKS:
+        _h = Path(__file__).resolve().parent / _name
+        assert _h.exists() and os.access(_h, os.X_OK), \
+            f"{_name} must exist and be executable: Claude Code reports a " \
+            f"missing hook command per tool call, in every project"
+
+    # referenced_open: the half a log cannot see on its own.
+    rst = {"aaaa": {"type": "action", "status": "open"},
+           "bbbb": {"type": "action", "status": "done"},
+           "cccc": {"type": "task", "status": "open"}}
+    assert referenced_open(rst, {"aaaa", "bbbb", "cccc", "9999", "2026"}) == ["aaaa"], \
+        "only a still-OPEN ACTION counts: a closed one needs nothing, a task " \
+        "is not something the user answers, and a marker matching no id at " \
+        "all is the stray 4-hex word the hook is allowed to record"
+    assert referenced_open({}, set()) == [], "no markers, no noise"
+
+    # warn_stale reports it, and still never reports the id just written.
+    with tempfile.TemporaryDirectory() as td:
+        keep2, DATA_DIR = DATA_DIR, Path(td)
+        try:
+            (DATA_DIR / "2026-01-01-proj.jsonl").write_text(json.dumps(
+                {"id": "abcd", "type": "action", "status": "open"}) + "\n")
+            (DATA_DIR / ".ref").mkdir()
+            (DATA_DIR / ".ref" / "abcd").touch()
+            err = io.StringIO()
+            with contextlib.redirect_stderr(err):
+                warn_stale("proj")
+            assert "abcd" in err.getvalue() and "named by the user" in err.getvalue(), \
+                "an action the user answered by id and the session never " \
+                "closed must be named: this was two of the three rows found " \
+                "stale on the wall, and nothing caught either of them"
+            err = io.StringIO()
+            with contextlib.redirect_stderr(err):
+                warn_stale("proj", skip_id="abcd")
+            assert err.getvalue() == "", \
+                "`done abcd` must not warn about abcd in the same breath - " \
+                "the fix and the complaint would arrive together, every time"
+        finally:
+            DATA_DIR = keep2
+
+    # project_of_id: progress and done resolve an id across EVERY project.
+    with tempfile.TemporaryDirectory() as td:
+        keep3, DATA_DIR = DATA_DIR, Path(td)
+        try:
+            (DATA_DIR / "2026-01-01-other-proj.jsonl").write_text(json.dumps(
+                {"id": "7777", "type": "task", "status": "open",
+                 "pct": 100}) + "\n")
+            assert project_of_id("7777") == "other-proj", \
+                "the item's own project must be recoverable from its file, or " \
+                "a task set to 100% from a directory named something else is " \
+                "never checked - the exact moment this warning exists for"
+            assert project_of_id("nope") is None and project_of_id(None) is None, \
+                "an unknown id falls back to the caller's project, not a crash"
+            err = io.StringIO()
+            with contextlib.redirect_stderr(err):
+                warn_stale(project_of_id("7777"))
+            assert "7777" in err.getvalue(), "and the nudge then actually fires"
+        finally:
+            DATA_DIR = keep3
+
+    with tempfile.TemporaryDirectory() as td:
+        u = Path(td) / "s.json"
+        u.write_text("original")
+        assert unchanged(u, "original"), "an untouched file must read as unchanged"
+        u.write_text("someone else wrote this")
+        assert not unchanged(u, "original"), \
+            "a file rewritten since we read it must NOT read as unchanged: " \
+            "Claude Code writes settings.json itself, and replacing it from a " \
+            "stale copy silently discards the permission the user just granted"
+        assert unchanged(Path(td) / "gone.json", ""), \
+            "a file that never existed is not a concurrent write - the first " \
+            "install on a clean machine must not refuse itself"
+    assert "if not unchanged(p, raw):" in code, \
+        "the guard must be CALLED before the replace; computed and ignored it " \
+        "protects nothing"
+
+    # cmd_install_hook hardening: it edits a file this tool does not own.
+    with tempfile.TemporaryDirectory() as td:
+        sp = Path(td) / "settings.json"
+        sp.write_text(json.dumps({"model": "opus"}))
+        (Path(td) / "settings.json.table-talk.bak").mkdir()
+        try:
+            cmd_install_hook(path=sp)
+            raise AssertionError("expected a refusal")
+        except SystemExit:
+            pass
+        assert json.loads(sp.read_text()) == {"model": "opus"}, \
+            "a DIRECTORY at the backup path reads as 'already backed up': " \
+            "without an is_file check the settings are rewritten with no " \
+            "recoverable copy anywhere"
+        for bad in ({"hooks": None}, {"hooks": "x"}, {"hooks": {"PostToolUse": "x"}},
+                    {"hooks": {"PostToolUse": ["x"]}}):
+            sp2 = Path(td) / "bad.json"
+            sp2.write_text(json.dumps(bad))
+            try:
+                cmd_install_hook(path=sp2)
+                raise AssertionError(f"expected a refusal for {bad}")
+            except SystemExit:
+                pass
+            assert json.loads(sp2.read_text()) == bad, \
+                "a hooks section of the wrong shape must REFUSE and leave the " \
+                "file untouched; a traceback is not a refusal, and the " \
+                "docstring promises this file is never overwritten blindly"
+        real = Path(td) / "real.json"
+        real.write_text(json.dumps({"model": "opus"}))
+        link = Path(td) / "link.json"
+        link.symlink_to(real)
+        cmd_install_hook(path=link)
+        assert link.is_symlink() and "hooks" in json.loads(real.read_text()), \
+            "a symlinked settings.json (chezmoi, stow, any dotfile manager) " \
+            "must be written THROUGH: os.replace swaps the link for a plain " \
+            "file and leaves the tracked original silently stale"
+
+    # tt-ref itself, run for real when jq is here. grep -o cannot produce
+    # OVERLAPPING matches, so a hand-rolled separator group ate the boundary
+    # the NEXT id needed: "a6d9 dcc5" recorded only a6d9, which is exactly the
+    # message that answers two actions at once.
+    if shutil.which("jq"):
+        here_ = Path(__file__).resolve().parent
+
+        def _hook(name, payload, td, env=None):
+            e = {**os.environ, "TABLE_TALK_DIR": td}
+            if env is not None:
+                e = env
+            r = subprocess.run([str(here_ / name)], input=json.dumps(payload),
+                               text=True, capture_output=True, timeout=90, env=e)
+            return r.returncode
+
+        with tempfile.TemporaryDirectory() as td:
+            _hook("tt-ref", {"prompt": "a6d9 dcc5; yes. not c65583d "
+                             "nor deadbeefcafe", "cwd": "/x"}, td)
+            got = {f.name for f in (Path(td) / ".ref").iterdir()}
+            assert got == {"a6d9", "dcc5"}, \
+                f"two ids in one message must BOTH be recorded, and hex " \
+                f"inside a longer token must not be mistaken for an id " \
+                f"(a git sha would flag constantly); got {sorted(got)}"
+
+        with tempfile.TemporaryDirectory() as td:
+            # A pasted hexdump is an ORDINARY message, not an attack.
+            flood = " ".join(f"{n:04x}" for n in range(4000))
+            t0 = time.time()
+            _hook("tt-ref", {"prompt": flood}, td)
+            took = time.time() - t0
+            n = len(list((Path(td) / ".ref").iterdir()))
+            assert n <= 32, \
+                f"the ids recorded per message must be CAPPED: a pasted " \
+                f"hexdump yields thousands, and UserPromptSubmit blocks the " \
+                f"session until this returns; got {n}"
+            assert took < 5, \
+                f"and it must stay fast - one process per id took 3.5s for a " \
+                f"154KB paste and 59s for a dense one; took {took:.1f}s"
+
+        with tempfile.TemporaryDirectory() as td:
+            # The sid becomes a filename; cut does not care what it cut.
+            _hook("tt-beat", {"session_id": "../x-evil"}, td)
+            assert not list(Path(td).glob("x*")), \
+                "a session_id starting with ../ must write NOTHING: it " \
+                "escaped .beat/ and dropped a file beside it"
+            _hook("tt-beat", {"session_id": "0d2b330d-239e-4668"}, td)
+            assert (Path(td) / ".beat" / "0d2b").exists(), \
+                "and a real session id must still beat, or the wall goes dark"
+
+        for _name in ("tt-ref", "tt-beat"):
+            rc = _hook(_name, {"prompt": "a6d9", "session_id": "a6d9-x"}, "",
+                       env={k: v for k, v in os.environ.items()
+                            if k not in ("HOME", "TABLE_TALK_DIR")})
+            assert rc == 0, \
+                f"{_name} must exit 0 with HOME unset: under set -u a bare " \
+                f"$HOME aborts NON-ZERO, and a hook that fails breaks the " \
+                f"very session it exists to observe"
+
     # The user's actual question: the hook must be part of `./install.sh`, not a
     # README paragraph they have to notice.
     setup = (Path(__file__).resolve().parent.parent / "install.sh").read_text()
@@ -1006,8 +1278,16 @@ def main():
         p.print_help()
 
     if args.cmd in ("action", "task", "progress", "done", "term", "diagram"):
-        warn_stale(getattr(args, "project", None),
-                   getattr(args, "id", None))
+        # BOTH projects: the one the item lives in (progress/done resolve an id
+        # across every project) and the one this session is reporting for. Using
+        # only the item's silently skips the cwd's other stale rows; using only
+        # the cwd's silently skips the item just touched. dict.fromkeys dedupes
+        # the common case where they are the same.
+        _id = getattr(args, "id", None)
+        for _proj in dict.fromkeys([project_of_id(_id),
+                                    safe_project(getattr(args, "project", None))]):
+            if _proj:
+                warn_stale(_proj, _id)
 
 
 if __name__ == "__main__":

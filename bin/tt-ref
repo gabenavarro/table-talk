@@ -1,0 +1,47 @@
+#!/bin/sh
+# A Claude Code UserPromptSubmit hook: note which item ids the user just named.
+#
+# Runs once per user message and does the least a useful hook can: it reads the
+# payload on stdin (`prompt` carries the raw message text) and touches an empty
+# file per candidate id. It deliberately does NOT read or write the event log.
+# A hook that appended JSONL on every prompt could corrupt a file the dashboard
+# reads and the CLI folds; touching an empty file cannot fail halfway.
+#
+# It records EVERY standalone 4-hex word, not just real ids, because deciding
+# what is an id means folding the log - Python work, and the CLI already does
+# it. The join happens at warn time, where a marker matching no open action is
+# simply ignored.
+#
+# It can never break the session it reports on: every failure path exits 0.
+set -u
+# ${HOME:+...} yields nothing when HOME is unset, so the guard catches it. Under
+# set -u a bare $HOME would abort with "unbound variable" and a NON-ZERO exit -
+# breaking the very session this hook exists to observe.
+base="${TABLE_TALK_DIR:-${HOME:+$HOME/.local/share/table-talk}}"
+[ -n "$base" ] || exit 0
+dir="$base/.ref"
+prompt=$(jq -r '.prompt // empty' 2>/dev/null) || exit 0
+[ -n "$prompt" ] || exit 0
+mkdir -p "$dir" 2>/dev/null || exit 0
+# ponytail: one flat directory of empty files, never pruned. A stray 4-hex word
+# ("2026", "cafe") leaves a 0-byte file the CLI ignores; at a handful a week
+# this is not worth a sweep. If it ever is, scope them per project using the
+# payload's .cwd and let each project prune its own.
+# -w, not a hand-rolled context group: grep -o cannot produce OVERLAPPING
+# matches, so consuming the separator after one id ate the boundary the next
+# one needed and "a6d9 dcc5" recorded only a6d9 - precisely the case where the
+# user answers two actions in one message.
+# LC_ALL=C: in a UTF-8 locale some greps match multibyte characters inside a
+# [0-9a-f] class, so "cafe\u0301" can pass a hex-only filter. Byte-wise matching
+# keeps the id charset an actual guarantee rather than a locale's opinion.
+#
+# head -n 32 CAPS the work. A pasted hexdump is ordinary (debugging output,
+# disassembly, a minified blob) and yields thousands of distinct 4-hex tokens;
+# one `touch` process each took 3.5s for a 154KB paste and 59s for a dense one,
+# and UserPromptSubmit BLOCKS the session until this returns. No real message
+# names 32 ids.
+printf '%s' "$prompt" | LC_ALL=C grep -woE '[0-9a-f]{4}' 2>/dev/null \
+  | sort -u | head -n 32 | while read -r id; do
+    touch "$dir/$id" 2>/dev/null
+done
+exit 0

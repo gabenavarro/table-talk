@@ -173,13 +173,22 @@ landed gets `done` now, not next reply. Two jobs sat "in progress" on the wall
 for three hours after their PR merged because nobody ran the command. A sample
 or demo item is a task like any other — close it once it has served its purpose.
 
-The CLI helps with exactly one half of this: after any recording command it
-prints `note: <id> at 100% and still open` for a task that reports itself
-finished but was never closed. Act on it in that same turn — either `done` it,
-or, if it is genuinely waiting on the user, record the action and
-`progress <id> --blocked-on <action-id>` so the wall shows why. Nothing warns
-about an ANSWERED ACTION left open; no log can know your reply answered it.
-That half is still yours.
+The CLI helps, on both halves. After any recording command it prints
+`note: <id> at 100% and still open` for a task that reports itself finished but
+was never closed, and `note: <id> named by the user and still open` for an
+action the user referenced by id — the log cannot know a message answered
+something, so a `UserPromptSubmit` hook supplies what the log cannot see.
+
+Act on either note in that same turn. A stale task is `done`, or, if it is
+genuinely waiting on the user, gets the action recorded and
+`progress <id> --blocked-on <action-id>` so the wall shows why. A named action
+is answered and `done`. Neither note is a reminder for later: it fires because
+the divergence already exists.
+
+Both notes are quiet by design and neither can catch everything — an answer
+carrying no id ("yes, do it") is invisible to the hook. Reading
+`table-talk show "$(basename "$PWD")" --open` before writing these tables is
+still the only thing that catches every case.
 
 **📖 Terms in this reply**
 | Term | Intuitive | Technical |
