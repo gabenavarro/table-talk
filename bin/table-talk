@@ -1125,17 +1125,58 @@ def selftest():
     # the NEXT id needed: "a6d9 dcc5" recorded only a6d9, which is exactly the
     # message that answers two actions at once.
     if shutil.which("jq"):
+        here_ = Path(__file__).resolve().parent
+
+        def _hook(name, payload, td, env=None):
+            e = {**os.environ, "TABLE_TALK_DIR": td}
+            if env is not None:
+                e = env
+            r = subprocess.run([str(here_ / name)], input=json.dumps(payload),
+                               text=True, capture_output=True, timeout=90, env=e)
+            return r.returncode
+
         with tempfile.TemporaryDirectory() as td:
-            ref = Path(__file__).resolve().parent / "tt-ref"
-            payload = json.dumps({"prompt": "a6d9 dcc5; yes. not c65583d "
-                                            "nor deadbeefcafe", "cwd": "/x"})
-            subprocess.run([str(ref)], input=payload, text=True,
-                           env={**os.environ, "TABLE_TALK_DIR": td}, timeout=10)
+            _hook("tt-ref", {"prompt": "a6d9 dcc5; yes. not c65583d "
+                             "nor deadbeefcafe", "cwd": "/x"}, td)
             got = {f.name for f in (Path(td) / ".ref").iterdir()}
             assert got == {"a6d9", "dcc5"}, \
                 f"two ids in one message must BOTH be recorded, and hex " \
                 f"inside a longer token must not be mistaken for an id " \
                 f"(a git sha would flag constantly); got {sorted(got)}"
+
+        with tempfile.TemporaryDirectory() as td:
+            # A pasted hexdump is an ORDINARY message, not an attack.
+            flood = " ".join(f"{n:04x}" for n in range(4000))
+            t0 = time.time()
+            _hook("tt-ref", {"prompt": flood}, td)
+            took = time.time() - t0
+            n = len(list((Path(td) / ".ref").iterdir()))
+            assert n <= 32, \
+                f"the ids recorded per message must be CAPPED: a pasted " \
+                f"hexdump yields thousands, and UserPromptSubmit blocks the " \
+                f"session until this returns; got {n}"
+            assert took < 5, \
+                f"and it must stay fast - one process per id took 3.5s for a " \
+                f"154KB paste and 59s for a dense one; took {took:.1f}s"
+
+        with tempfile.TemporaryDirectory() as td:
+            # The sid becomes a filename; cut does not care what it cut.
+            _hook("tt-beat", {"session_id": "../x-evil"}, td)
+            assert not list(Path(td).glob("x*")), \
+                "a session_id starting with ../ must write NOTHING: it " \
+                "escaped .beat/ and dropped a file beside it"
+            _hook("tt-beat", {"session_id": "0d2b330d-239e-4668"}, td)
+            assert (Path(td) / ".beat" / "0d2b").exists(), \
+                "and a real session id must still beat, or the wall goes dark"
+
+        for _name in ("tt-ref", "tt-beat"):
+            rc = _hook(_name, {"prompt": "a6d9", "session_id": "a6d9-x"}, "",
+                       env={k: v for k, v in os.environ.items()
+                            if k not in ("HOME", "TABLE_TALK_DIR")})
+            assert rc == 0, \
+                f"{_name} must exit 0 with HOME unset: under set -u a bare " \
+                f"$HOME aborts NON-ZERO, and a hook that fails breaks the " \
+                f"very session it exists to observe"
 
     # The user's actual question: the hook must be part of `./install.sh`, not a
     # README paragraph they have to notice.

@@ -14,7 +14,12 @@
 #
 # It can never break the session it reports on: every failure path exits 0.
 set -u
-dir="${TABLE_TALK_DIR:-$HOME/.local/share/table-talk}/.ref"
+# ${HOME:+...} yields nothing when HOME is unset, so the guard catches it. Under
+# set -u a bare $HOME would abort with "unbound variable" and a NON-ZERO exit -
+# breaking the very session this hook exists to observe.
+base="${TABLE_TALK_DIR:-${HOME:+$HOME/.local/share/table-talk}}"
+[ -n "$base" ] || exit 0
+dir="$base/.ref"
 prompt=$(jq -r '.prompt // empty' 2>/dev/null) || exit 0
 [ -n "$prompt" ] || exit 0
 mkdir -p "$dir" 2>/dev/null || exit 0
@@ -26,7 +31,17 @@ mkdir -p "$dir" 2>/dev/null || exit 0
 # matches, so consuming the separator after one id ate the boundary the next
 # one needed and "a6d9 dcc5" recorded only a6d9 - precisely the case where the
 # user answers two actions in one message.
-printf '%s' "$prompt" | grep -woE '[0-9a-f]{4}' 2>/dev/null | sort -u | while read -r id; do
+# LC_ALL=C: in a UTF-8 locale some greps match multibyte characters inside a
+# [0-9a-f] class, so "cafe\u0301" can pass a hex-only filter. Byte-wise matching
+# keeps the id charset an actual guarantee rather than a locale's opinion.
+#
+# head -n 32 CAPS the work. A pasted hexdump is ordinary (debugging output,
+# disassembly, a minified blob) and yields thousands of distinct 4-hex tokens;
+# one `touch` process each took 3.5s for a 154KB paste and 59s for a dense one,
+# and UserPromptSubmit BLOCKS the session until this returns. No real message
+# names 32 ids.
+printf '%s' "$prompt" | LC_ALL=C grep -woE '[0-9a-f]{4}' 2>/dev/null \
+  | sort -u | head -n 32 | while read -r id; do
     touch "$dir/$id" 2>/dev/null
 done
 exit 0

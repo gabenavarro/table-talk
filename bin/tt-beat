@@ -11,9 +11,19 @@
 # It can never break the session it reports on: every failure path exits 0, and
 # nothing it writes is read by anything that must succeed.
 set -u
-dir="${TABLE_TALK_DIR:-$HOME/.local/share/table-talk}/.beat"
+# ${HOME:+...} yields nothing when HOME is unset; a bare $HOME under set -u
+# would abort non-zero and break the session this hook exists to observe.
+base="${TABLE_TALK_DIR:-${HOME:+$HOME/.local/share/table-talk}}"
+[ -n "$base" ] || exit 0
+dir="$base/.beat"
 sid=$(jq -r '.session_id // empty' 2>/dev/null | cut -c1-4)
-[ -n "$sid" ] || exit 0
+# The sid becomes a FILENAME, and cut does not care what it cut: a session_id
+# of "../x" wrote a file a level up, outside .beat/ entirely. Four hex
+# characters is what a session code is; anything else is not ours to write.
+case $sid in
+    [0-9a-f][0-9a-f][0-9a-f][0-9a-f]) ;;
+    *) exit 0 ;;
+esac
 mkdir -p "$dir" 2>/dev/null || exit 0
 touch "$dir/$sid" 2>/dev/null || exit 0
 exit 0
