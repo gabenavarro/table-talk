@@ -176,6 +176,22 @@ Two things `tt-ref` cannot do. It sees a *reference*, not an answer — asking
 "what is `a6d9` about?" flags it too, which is still a moment worth acting on.
 And it sees nothing when you answer with no id at all ("yes, do it").
 
+## Reaching it from another device
+
+The dashboard listens on `127.0.0.1` — this machine only. To open it from a
+phone or another computer, set the bind address in the config:
+
+```toml
+[server]
+host = "0.0.0.0"
+```
+
+**There is no password on this page.** Anyone who can reach the port reads your
+work log, project names and file paths, and "your network" includes shared
+wifi. The dashboard says so on startup when it binds beyond localhost. Only two
+values are accepted; anything else falls back to `127.0.0.1` with a warning,
+so a typo can never widen exposure.
+
 ## Themes
 
 Fifteen terminal palettes ship in `bin/themes.json`, converted from

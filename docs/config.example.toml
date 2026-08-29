@@ -10,6 +10,11 @@
 # serve` shows a different set of logs without touching your own.
 
 [server]
+# host: "127.0.0.1" keeps the dashboard on this machine. "0.0.0.0" serves it on
+# every interface so a phone or another computer on your network can open it -
+# there is NO password on this page, so anyone who can reach the port reads your
+# work log, project names and file paths. Local networks include shared wifi.
+host = "127.0.0.1"
 port = 8731             # dashboard HTTP port
 poll_seconds = 2.0       # how often the dashboard re-reads the log files
 
