@@ -1,0 +1,391 @@
+{
+ "_adapted": "An 'adapted' list names tokens moved toward the ink to clear this app's contrast floors. Terminal accents are chosen for large glyphs on their own ground; here they are 9-12px UI text.",
+ "_licence": "The colour schemes are MIT licensed; see THEMES-LICENCE. Every theme credits its original by name.",
+ "_source": "https://github.com/mbadolato/iTerm2-Color-Schemes (MIT), the same collection Ghostty's built-in themes come from",
+ "themes": {
+  "Ayu Light": {
+   "adapted": [
+    "act",
+    "caret",
+    "gls",
+    "job",
+    "ok"
+   ],
+   "dark": false,
+   "tokens": {
+    "act": "#d56a6c",
+    "act-2": "#f07171",
+    "bg": "#f8f9fa",
+    "caret": "#a9834e",
+    "gls": "#a48555",
+    "gls-2": "#f2ae49",
+    "ink": "#5c6166",
+    "ink-2": "#686c71",
+    "ink-3": "#787c80",
+    "job": "#3791cf",
+    "job-2": "#399ee6",
+    "mag": "#9e75c7",
+    "ok": "#659752",
+    "ok-2": "#86b300",
+    "sel": "#035bd6",
+    "surface": "#eff0f1",
+    "surface-2": "#e7e8ea"
+   }
+  },
+  "Catppuccin Latte": {
+   "adapted": [
+    "caret",
+    "gls",
+    "mag",
+    "ok"
+   ],
+   "dark": false,
+   "tokens": {
+    "act": "#d20f39",
+    "act-2": "#e7103f",
+    "bg": "#eff1f5",
+    "caret": "#ac7773",
+    "gls": "#ae7936",
+    "gls-2": "#e49931",
+    "ink": "#4c4f69",
+    "ink-2": "#61647b",
+    "ink-3": "#72758a",
+    "job": "#1e66f5",
+    "job-2": "#3878f6",
+    "mag": "#b669ab",
+    "ok": "#419632",
+    "ok-2": "#46b02f",
+    "sel": "#dc8a78",
+    "surface": "#e5e7ed",
+    "surface-2": "#dddfe6"
+   }
+  },
+  "Catppuccin Mocha": {
+   "adapted": [],
+   "dark": true,
+   "tokens": {
+    "act": "#f7aec2",
+    "act-2": "#f38ba8",
+    "bg": "#1e1e2e",
+    "caret": "#f5e0dc",
+    "gls": "#fcd682",
+    "gls-2": "#f9e2af",
+    "ink": "#cdd6f4",
+    "ink-2": "#8d93ab",
+    "ink-3": "#7a8097",
+    "job": "#aeccfc",
+    "job-2": "#89b4fa",
+    "mag": "#f398da",
+    "ok": "#c2ecbf",
+    "ok-2": "#a6e3a1",
+    "sel": "#f5e0dc",
+    "surface": "#28293a",
+    "surface-2": "#313244"
+   }
+  },
+  "Dracula": {
+   "adapted": [],
+   "dark": true,
+   "tokens": {
+    "act": "#ff6e6e",
+    "act-2": "#ff5555",
+    "bg": "#282a36",
+    "caret": "#f8f8f2",
+    "gls": "#ffffa5",
+    "gls-2": "#f1fa8c",
+    "ink": "#f8f8f2",
+    "ink-2": "#a0a1a2",
+    "ink-3": "#8c8d91",
+    "job": "#d6acff",
+    "job-2": "#bd93f9",
+    "mag": "#ff92df",
+    "ok": "#69ff94",
+    "ok-2": "#50fa7b",
+    "sel": "#44475a",
+    "surface": "#343641",
+    "surface-2": "#3f414b"
+   }
+  },
+  "Everforest Dark Hard": {
+   "adapted": [],
+   "dark": true,
+   "tokens": {
+    "act": "#f85552",
+    "act-2": "#e67e80",
+    "bg": "#1e2326",
+    "caret": "#e69875",
+    "gls": "#dfa000",
+    "gls-2": "#dbbc7f",
+    "ink": "#d3c6aa",
+    "ink-2": "#9d9582",
+    "ink-3": "#888373",
+    "job": "#3a94c5",
+    "job-2": "#7fbbb3",
+    "mag": "#df69ba",
+    "ok": "#8da101",
+    "ok-2": "#a7c080",
+    "sel": "#4c3743",
+    "surface": "#292d2e",
+    "surface-2": "#323535"
+   }
+  },
+  "Everforest Light Hard": {
+   "adapted": [
+    "act",
+    "caret",
+    "gls",
+    "ink",
+    "job",
+    "mag",
+    "ok"
+   ],
+   "dark": false,
+   "tokens": {
+    "act": "#ad757a",
+    "act-2": "#f85552",
+    "bg": "#f2efdf",
+    "caret": "#b47546",
+    "gls": "#888471",
+    "gls-2": "#dfa000",
+    "ink": "#5b6971",
+    "ink-2": "#5b6971",
+    "ink-3": "#6c787d",
+    "job": "#698a8b",
+    "job-2": "#3a94c5",
+    "mag": "#917e8f",
+    "ok": "#768972",
+    "ok-2": "#8da101",
+    "sel": "#f0f2d4",
+    "surface": "#e9e7d8",
+    "surface-2": "#e2e0d3"
+   }
+  },
+  "Gruvbox Dark Hard": {
+   "adapted": [],
+   "dark": true,
+   "tokens": {
+    "act": "#fb4934",
+    "act-2": "#cc241d",
+    "bg": "#1d2021",
+    "caret": "#ebdbb2",
+    "gls": "#fabd2f",
+    "gls-2": "#d79921",
+    "ink": "#ebdbb2",
+    "ink-2": "#9b937a",
+    "ink-3": "#88816d",
+    "job": "#83a598",
+    "job-2": "#458588",
+    "mag": "#d3869b",
+    "ok": "#b8bb26",
+    "ok-2": "#98971a",
+    "sel": "#665c54",
+    "surface": "#292b2a",
+    "surface-2": "#343531"
+   }
+  },
+  "Gruvbox Light Hard": {
+   "adapted": [
+    "gls",
+    "ok"
+   ],
+   "dark": false,
+   "tokens": {
+    "act": "#cc241d",
+    "act-2": "#9d0006",
+    "bg": "#f9f5d7",
+    "caret": "#3c3836",
+    "gls": "#aa7d27",
+    "gls-2": "#b57614",
+    "ink": "#3c3836",
+    "ink-2": "#6a665d",
+    "ink-3": "#7c786c",
+    "job": "#458588",
+    "job-2": "#076678",
+    "mag": "#b16286",
+    "ok": "#8a891e",
+    "ok-2": "#79740e",
+    "sel": "#3c3836",
+    "surface": "#eeeacd",
+    "surface-2": "#e4e0c5"
+   }
+  },
+  "Kanagawa Wave": {
+   "adapted": [],
+   "dark": true,
+   "tokens": {
+    "act": "#e82424",
+    "act-2": "#c34043",
+    "bg": "#1f1f28",
+    "caret": "#dcd7ba",
+    "gls": "#e6c384",
+    "gls-2": "#c0a36e",
+    "ink": "#dcd7ba",
+    "ink-2": "#979485",
+    "ink-3": "#858277",
+    "job": "#7fb4ca",
+    "job-2": "#7e9cd8",
+    "mag": "#938aa9",
+    "ok": "#98bb6c",
+    "ok-2": "#76946a",
+    "sel": "#dcd7ba",
+    "surface": "#2a2a31",
+    "surface-2": "#343338"
+   }
+  },
+  "Nord": {
+   "adapted": [
+    "act"
+   ],
+   "dark": true,
+   "tokens": {
+    "act": "#c2717b",
+    "act-2": "#bf616a",
+    "bg": "#2e3440",
+    "caret": "#eceff4",
+    "gls": "#ebcb8b",
+    "gls-2": "#ebcb8b",
+    "ink": "#d8dee9",
+    "ink-2": "#a5abb6",
+    "ink-3": "#9096a1",
+    "job": "#81a1c1",
+    "job-2": "#81a1c1",
+    "mag": "#b48ead",
+    "ok": "#a3be8c",
+    "ok-2": "#a3be8c",
+    "sel": "#eceff4",
+    "surface": "#383e4a",
+    "surface-2": "#414753"
+   }
+  },
+  "Nord Light": {
+   "adapted": [
+    "caret",
+    "gls",
+    "job",
+    "mag",
+    "ok"
+   ],
+   "dark": false,
+   "tokens": {
+    "act": "#bf616a",
+    "act-2": "#bf616a",
+    "bg": "#e5e9f0",
+    "caret": "#618393",
+    "gls": "#8c7d5f",
+    "gls-2": "#c5a565",
+    "ink": "#414858",
+    "ink-2": "#5a606f",
+    "ink-3": "#6b717f",
+    "job": "#69809a",
+    "job-2": "#81a1c1",
+    "mag": "#8e7791",
+    "ok": "#71836e",
+    "ok-2": "#96b17f",
+    "sel": "#d8dee9",
+    "surface": "#dbdfe7",
+    "surface-2": "#d3d7df"
+   }
+  },
+  "Rose Pine": {
+   "adapted": [
+    "ok"
+   ],
+   "dark": true,
+   "tokens": {
+    "act": "#eb6f92",
+    "act-2": "#eb6f92",
+    "bg": "#191724",
+    "caret": "#e0def4",
+    "gls": "#f6c177",
+    "gls-2": "#f6c177",
+    "ink": "#e0def4",
+    "ink-2": "#8e8c9e",
+    "ink-3": "#7b798a",
+    "job": "#9ccfd8",
+    "job-2": "#9ccfd8",
+    "mag": "#c4a7e7",
+    "ok": "#347691",
+    "ok-2": "#31748f",
+    "sel": "#403d52",
+    "surface": "#252330",
+    "surface-2": "#2f2d3b"
+   }
+  },
+  "Rose Pine Dawn": {
+   "adapted": [
+    "gls",
+    "job"
+   ],
+   "dark": false,
+   "tokens": {
+    "act": "#b4637a",
+    "act-2": "#b4637a",
+    "bg": "#faf4ed",
+    "caret": "#575279",
+    "gls": "#ab7d52",
+    "gls-2": "#ea9d34",
+    "ink": "#575279",
+    "ink-2": "#696486",
+    "ink-3": "#7c7693",
+    "job": "#568f9c",
+    "job-2": "#56949f",
+    "mag": "#907aa9",
+    "ok": "#286983",
+    "ok-2": "#286983",
+    "sel": "#dfdad9",
+    "surface": "#f0eae6",
+    "surface-2": "#e8e2e0"
+   }
+  },
+  "TokyoNight Day": {
+   "adapted": [
+    "act",
+    "ink",
+    "job"
+   ],
+   "dark": false,
+   "tokens": {
+    "act": "#e72d6b",
+    "act-2": "#f52a65",
+    "bg": "#e1e2e7",
+    "caret": "#3760bf",
+    "gls": "#8c6c3e",
+    "gls-2": "#8c6c3e",
+    "ink": "#345bb5",
+    "ink-2": "#345bb5",
+    "ink-3": "#496cbb",
+    "job": "#2f79e3",
+    "job-2": "#2e7de9",
+    "mag": "#9854f1",
+    "ok": "#587539",
+    "ok-2": "#587539",
+    "sel": "#99a7df",
+    "surface": "#d7dae5",
+    "surface-2": "#ced4e3"
+   }
+  },
+  "TokyoNight Night": {
+   "adapted": [],
+   "dark": true,
+   "tokens": {
+    "act": "#f7768e",
+    "act-2": "#f7768e",
+    "bg": "#1a1b26",
+    "caret": "#c0caf5",
+    "gls": "#e0af68",
+    "gls-2": "#e0af68",
+    "ink": "#c0caf5",
+    "ink-2": "#888faf",
+    "ink-3": "#777d99",
+    "job": "#7aa2f7",
+    "job-2": "#7aa2f7",
+    "mag": "#bb9af7",
+    "ok": "#9ece6a",
+    "ok-2": "#9ece6a",
+    "sel": "#283457",
+    "surface": "#242632",
+    "surface-2": "#2c2e3d"
+   }
+  }
+ }
+}

@@ -159,6 +159,25 @@ Add to `~/.claude/settings.json` (needs `jq`):
 Without it nothing changes: no directory, no heartbeats, no markers. The hook
 exits 0 on every failure path, so it can never break the session it reports on.
 
+## Themes
+
+Fifteen terminal palettes ship in `bin/themes.json`, converted from
+[iTerm2-Color-Schemes](https://github.com/mbadolato/iTerm2-Color-Schemes) — the
+same collection [Ghostty's own themes](https://ghostty.org/docs/features/theme)
+come from — under its MIT licence (see [THEMES-LICENCE](THEMES-LICENCE)).
+
+The conversion is mechanical: 14 of this app's 17 colour tokens *are* a terminal
+theme's ANSI palette, and Gruvbox Dark Hard reproduces the palette this app
+already shipped, to the byte. `bg` is the theme's background; `surface` and
+`surface-2` are derived, because a terminal has one background where this wall
+has three depths.
+
+Every bundled theme is checked against the contrast pairs the stylesheet
+documents. Six pass untouched. The rest are marked `adapted`, naming the exact
+tokens moved: terminal accents are chosen for large glyphs on their own ground,
+and here they are 9–12px UI text — a faithful yellow on a light background is
+about 1.8:1. Regenerate with `tools/build-themes.py`.
+
 ## Configuration
 
 UI state — theme, marks, folds, scope, sort and what you have already seen —
