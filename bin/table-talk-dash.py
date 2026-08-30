@@ -16,6 +16,7 @@ from pathlib import Path
 
 import tt_config
 import tt_model as M
+import tt_jobs
 from tt_model import DATA_DIR, fold_cached
 
 # Persistence belongs to the DATA, not to the shell that launched the server.
@@ -647,6 +648,24 @@ def coerce(kind, bounds, value, like):
     if not (lo <= num <= hi):
         return None
     return float(num) if isinstance(like, float) else int(num)
+
+
+def panel_state(cfg, roots):
+    """What the job dialog may show: ("refused"|"empty"|"form", payload).
+
+    The decision is a pure function so it can be tested by BEHAVIOUR rather
+    than by grepping the panel for a call. The first version of this pinned
+    only the call text, and adding `allowed = True` after it left the suite
+    green - on the one control the whole design rests on.
+    """
+    ok, why = tt_jobs.launch_allowed(cfg["server"]["host"])
+    if not ok:
+        return "refused", why
+    if not roots:
+        return "empty", ("no project has recorded its directory yet - run any "
+                         "table-talk command from inside a project first, and "
+                         "it will appear here")
+    return "form", sorted(roots)
 
 
 async def run_job(spec, on_event, client_factory=None):
@@ -1819,6 +1838,45 @@ def selftest():
     assert ".cfg-row" in css and ".cfg{" in css, \
         "the form needs its own styling in the sheet, or it renders as " \
         "unthemed browser defaults inside a themed app"
+    # panel_state: the interlock, testable by behaviour. A grep for the call
+    # cannot fail when someone neuters the answer.
+    _cfg_net = {"server": {"host": "0.0.0.0"}}
+    _cfg_loc = {"server": {"host": "127.0.0.1"}}
+    _roots = {"proj": "/home/u/proj"}
+    assert panel_state(_cfg_net, _roots)[0] == "refused", \
+        "a dashboard reachable from the network must NOT offer to start a " \
+        "job: it has no password and a job can run commands, which together " \
+        "is a remote shell for anyone on shared wifi"
+    assert "no password" in panel_state(_cfg_net, _roots)[1], \
+        "and it must say WHY, or the button just looks broken"
+    assert panel_state(_cfg_loc, _roots) == ("form", ["proj"]), \
+        "on localhost, with a project whose directory is known, the form opens"
+    assert panel_state(_cfg_loc, {})[0] == "empty", \
+        "a project whose directory was never recorded must NOT be offered: " \
+        "the alternative is guessing, and a wrong guess runs an agent with " \
+        "Edit and Bash in a directory nobody chose"
+    assert panel_state(_cfg_net, {})[0] == "refused", \
+        "the interlock outranks emptiness - it is checked first, always"
+
+    assert "state, payload = panel_state(cfg, roots)" in code and \
+           'if state != "form":' in code, \
+        "the dialog must BRANCH on panel_state's answer: the form and the " \
+        "refusal are different code paths, so there is no start control to " \
+        "re-enable on the refused one"
+    assert "tt_jobs.pattern_problem(x)" in code, \
+        "a pattern that cannot be made safe must be refused when the job is " \
+        "STARTED, not argued with per command - `find . -exec` carries no " \
+        "metacharacter for a command-time check to catch"
+    assert "cwd = roots.get(proj.value)" in code and "link_roots" not in \
+           code.split("def job_panel")[1].split("def cycle_theme")[0], \
+        "the job's directory must come from the recorded project roots and " \
+        "NEVER from link_roots, which is a link-confinement list - using it " \
+        "put four of five projects in the dashboard's own directory and the " \
+        "table-talk project inside the event log store"
+    assert ".job-deny" in css and ".job{" in css, \
+        "a refusal must LOOK like one, or a job the dashboard stopped reads " \
+        "as the model failing"
+
     # run_job, driven by a FAKE client so the suite never starts a session,
     # needs credentials, or costs money.
     import asyncio as _aio
@@ -2198,6 +2256,11 @@ def main(port=None):
                     # file, which froze on the day it was created.
                     if (ref := cfg_path.parent / "config.example.toml").is_file():
                         ctx.append(("settings ref", ref))
+                    jb = ui.element("button").classes("lk dw-ctx-i")
+                    jb.props["title"] = "start a job"
+                    with jb:
+                        ui.label("job")
+                    jb.on("click", lambda _: job_panel(cfg))
                 if ctx:
                     with ui.element("div").classes("dw-ctx"):
                         for label, p in ctx:
@@ -2349,6 +2412,69 @@ def main(port=None):
                 port_go.set_visibility(True)
 
         save.on("click", do_save)
+        dlg.open()
+
+    def job_panel(cfg):
+        """Start a job in a project whose directory the wall has recorded."""
+        roots = M.project_roots({f.stem: M.fold_cached(f)
+                                 for f in DATA_DIR.glob("*.jsonl")})
+        state, payload = panel_state(cfg, roots)
+        with ui.dialog() as dlg, ui.element("div").classes("job"):
+            ui.label("start a job").classes("cfg-h")
+            if state != "form":
+                # No start control EXISTS on this path, rather than one that
+                # is disabled: there is nothing here to re-enable.
+                ui.label(payload).classes("job-deny")
+                with ui.element("div").classes("cfg-act"):
+                    b = ui.element("button").classes("lk")
+                    with b:
+                        ui.label("close")
+                    b.on("click", lambda _: dlg.close())
+                dlg.open()
+                return
+            proj = ui.select(payload, value=payload[0])
+            text = ui.textarea("what should it do?")
+            tools = ui.select(["Read", "Grep", "Glob", "Edit", "Write", "Bash"],
+                              multiple=True, value=["Read", "Grep", "Glob"])
+            bash = ui.input("allowed shell commands, comma separated",
+                            placeholder="pytest, git status, git commit")
+            out = ui.element("div").classes("job-out")
+            with ui.element("div").classes("cfg-act"):
+                go = ui.element("button").classes("lk")
+                with go:
+                    ui.label("start")
+                shut = ui.element("button").classes("lk")
+                with shut:
+                    ui.label("close")
+                shut.on("click", lambda _: dlg.close())
+
+            def feed(kind, body):
+                with out:
+                    ui.label(body if kind != "done" else "— finished —") \
+                        .classes(f"job-{kind}")
+
+            async def start(_):
+                pats = tuple(x.strip() for x in (bash.value or "").split(",")
+                             if x.strip())
+                bad = [(x, tt_jobs.pattern_problem(x)) for x in pats
+                       if tt_jobs.pattern_problem(x)]
+                if bad:
+                    # Refused BEFORE the job exists: a pattern like `find`
+                    # cannot be made safe by inspecting arguments later.
+                    for x, why in bad:
+                        feed("deny", f"{x}: {why}")
+                    return
+                cwd = roots.get(proj.value)
+                if not cwd:
+                    feed("deny", f"no recorded directory for {proj.value}")
+                    return
+                spec = tt_jobs.mint_job(proj.value, cwd, text.value or "",
+                                        tools=tuple(tools.value or ()),
+                                        bash=pats)
+                feed("tool", f"session {tt_jobs.job_sid(spec)} in {cwd}")
+                await run_job(spec, feed)
+
+            go.on("click", start)
         dlg.open()
 
     def cycle_theme():

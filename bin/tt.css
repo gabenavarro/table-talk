@@ -467,3 +467,13 @@ body{background:var(--bg);color:var(--ink);margin:0}
 .cfg-row .q-field{min-width:170px}
 .cfg-msg{margin-top:10px;color:var(--ink-2);font-size:12px;min-height:1em}
 .cfg-act{display:flex;gap:14px;margin-top:8px;justify-content:flex-end}
+
+/* The job panel. Tokens only, so it follows whatever theme is loaded. */
+.job{background:var(--surface);color:var(--ink);padding:14px 16px;
+     border:1px solid var(--rule);min-width:420px;max-width:92vw}
+.job-out{max-height:40vh;overflow:auto;margin:10px 0;font-size:12px}
+.job-text{color:var(--ink);white-space:pre-wrap}
+.job-tool{color:var(--ink-2)}
+.job-deny{color:var(--act);font-weight:600}
+.job-error{color:var(--act)}
+.job-done{color:var(--ink-3)}
