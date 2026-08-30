@@ -649,6 +649,71 @@ def coerce(kind, bounds, value, like):
     return float(num) if isinstance(like, float) else int(num)
 
 
+async def run_job(spec, on_event, client_factory=None):
+    """Drive one job to completion, reporting as it goes.
+
+    ClaudeAgentOptions and HookMatcher are duck-typed locally and the SDK
+    import is confined to the real branch, so with a client_factory injected
+    this never touches claude_agent_sdk at all: nothing in ./test.sh needs the
+    SDK installed, needs credentials, or costs money. The SDK is deliberately
+    NOT in this file's PEP 723 dependencies for the same reason - declaring it
+    made the suite unresolvable offline even though the import is lazy.
+    """
+    import tt_jobs as J
+
+    class ClaudeAgentOptions:
+        def __init__(self, **kw): self.__dict__.update(kw)
+
+    class HookMatcher:
+        def __init__(self, hooks): self.hooks = hooks
+
+    def say(kind, body):
+        """A panel that throws must not take the job or the page with it."""
+        try:
+            on_event(kind, body)
+        except Exception:
+            logging.exception("job panel raised on %s", kind)
+
+    if client_factory is None:                      # pragma: no cover - real path
+        try:
+            from claude_agent_sdk import (ClaudeSDKClient, ClaudeAgentOptions,
+                                          HookMatcher)
+        except ImportError:
+            say("error", "claude-agent-sdk is not installed: "
+                         "pip install claude-agent-sdk")
+            return spec.session_id
+        client_factory = ClaudeSDKClient
+
+    async def gate(payload, tool_use_id, context):
+        allow, why = J.gate_decision(spec, payload.get("tool_name"),
+                                     payload.get("tool_input"))
+        say("tool" if allow else "deny",
+            f"{payload.get('tool_name')}: {why or 'allowed'}")
+        return J.hook_output(allow, why)
+
+    opts = ClaudeAgentOptions(
+        cwd=spec.cwd,
+        session_id=spec.session_id,
+        permission_mode="dontAsk",      # unlisted means denied, never prompted
+        allowed_tools=[],               # everything falls through to the hook
+        hooks={"PreToolUse": [HookMatcher(hooks=[gate])]},
+        # So the job's own table-talk records carry the sid the wall is already
+        # showing: the CLI stamps the first four characters of this variable.
+        env={"CLAUDE_CODE_SESSION_ID": spec.session_id},
+    )
+    try:
+        async with client_factory(options=opts) as client:
+            await client.query(spec.text)
+            async for msg in client.receive_response():
+                for block in getattr(msg, "content", []) or []:
+                    if (text := getattr(block, "text", None)):
+                        say("text", text)
+        say("done", "")
+    except Exception as e:                          # a job must not kill the page
+        say("error", str(e))
+    return spec.session_id
+
+
 def ensure_config(path=None, example=None):
     """The config file, created from the documented example if it is missing.
 
@@ -1754,6 +1819,71 @@ def selftest():
     assert ".cfg-row" in css and ".cfg{" in css, \
         "the form needs its own styling in the sheet, or it renders as " \
         "unthemed browser defaults inside a themed app"
+    # run_job, driven by a FAKE client so the suite never starts a session,
+    # needs credentials, or costs money.
+    import asyncio as _aio
+    import tt_jobs as _J
+
+    class _FakeMsg:
+        def __init__(self, text):
+            self.content = [type("B", (), {"text": text})()]
+
+    class _FakeClient:
+        seen = {}
+
+        def __init__(self, options=None):
+            _FakeClient.seen = dict(options.__dict__)
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def query(self, text):
+            _FakeClient.seen["query"] = text
+
+        async def receive_response(self):
+            yield _FakeMsg("working")
+
+    _spec = _J.mint_job("proj", "/tmp/proj", "do it", tools=("Read",), bash=())
+    _ev = []
+    _aio.run(run_job(_spec, lambda k, t: _ev.append((k, t)), _FakeClient))
+    _got = _FakeClient.seen
+    assert _got["cwd"] == "/tmp/proj" and _got["session_id"] == _spec.session_id, \
+        "the runner must hand the SDK the project root and the id the " \
+        "dashboard minted, or the wall cannot show the job until its first " \
+        "event and the job may run in the wrong directory"
+    assert _got["permission_mode"] == "dontAsk", \
+        "anything the gate does not allow must be DENIED, not prompted for: " \
+        "there is no terminal here, so a prompt is a hang"
+    assert _got["allowed_tools"] == [], \
+        "allowed_tools must stay EMPTY - a whole-tool entry auto-approves " \
+        "before the hook is consulted, which is how a gate ends up never running"
+    assert "PreToolUse" in _got["hooks"], \
+        "the gate must be a PreToolUse hook: it runs ahead of the ambient " \
+        "allow rules that would otherwise shadow it"
+    assert _got["env"]["CLAUDE_CODE_SESSION_ID"] == _spec.session_id, \
+        "the job's own table-talk records must carry the sid the wall is " \
+        "already showing, and the CLI reads it from this variable - without " \
+        "it the README's promise that jobs appear on the wall is false"
+    assert _J.job_sid(_spec) == _spec.session_id[:4], \
+        "and that sid is the first four characters, which is what the CLI stamps"
+    assert ("text", "working") in _ev and any(k == "done" for k, _ in _ev), \
+        "the panel is fed as the session speaks, not once at the end"
+
+    # The hook the runner INSTALLED must be the gate tt_jobs pins - a gate
+    # tested in isolation from the one that runs is not tested.
+    _hook = _got["hooks"]["PreToolUse"][0].hooks[0]
+    _out = _aio.run(_hook({"tool_name": "Nope", "tool_input": {}}, "id", None))
+    assert _out["hookSpecificOutput"]["permissionDecision"] == "deny", \
+        "the installed hook must deny what gate_decision denies"
+
+    # A panel that throws must not take the job or the page down with it.
+    def _boom(kind, body):
+        raise RuntimeError("panel is broken")
+    _aio.run(run_job(_spec, _boom, _FakeClient))
+
     assert 'ctx.append(("settings ref", ref))' in code, \
         "the drawer must offer the CURRENT documented example: a user's own " \
         "config froze on the day it was created, so every option added since " \
