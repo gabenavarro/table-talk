@@ -94,6 +94,65 @@ document.addEventListener('click', e => {
 });
 </script>"""
 
+REPLY_JS = """<script>
+(() => {
+  // Drafts live HERE, not on the server. The wall calls container.clear() on
+  // every poll, so a server-side input loses its text AND the caret every two
+  // seconds - which makes composing a considered answer impossible. Keeping
+  // the draft, the focus and the selection in the page survives the rebuild.
+  const drafts = new Map();
+  let want = null;
+  const key = el => el.dataset.reply || '';
+
+  document.addEventListener('input', e => {
+    const t = e.target.closest && e.target.closest('[data-reply]');
+    if (!t) return;
+    drafts.set(key(t), t.value);
+    want = {id: key(t), start: t.selectionStart, end: t.selectionEnd};
+  });
+
+  // A deliberate click elsewhere gives up the caret; without this the restore
+  // below would yank focus back out of whatever the reader clicked next.
+  document.addEventListener('mousedown', e => {
+    if (!(e.target.closest && e.target.closest('[data-reply]'))) want = null;
+  });
+
+  document.addEventListener('click', e => {
+    const b = e.target.closest && e.target.closest('[data-reply-copy]');
+    if (!b) return;
+    const id = b.dataset.replyCopy || '';
+    if (!/^[0-9a-f]{4,}$/.test(id)) return;      // never copy arbitrary text
+    const text = (drafts.get(id) || '').trim();
+    if (!text) return;
+    const line = id + ': ' + text;
+    if (navigator.clipboard) navigator.clipboard.writeText(line).catch(() => {});
+    b.classList.add('copied');
+    setTimeout(() => b.classList.remove('copied'), 900);
+  });
+
+  let queued = false;
+  const restore = () => {
+    queued = false;
+    document.querySelectorAll('[data-reply]').forEach(t => {
+      const d = drafts.get(key(t));
+      if (d !== undefined && t.value !== d) t.value = d;
+    });
+    if (!want) return;
+    const t = [...document.querySelectorAll('[data-reply]')]
+      .find(e => key(e) === want.id);
+    if (t && document.activeElement !== t) {
+      t.focus();
+      try { t.setSelectionRange(want.start, want.end); } catch (_) {}
+    }
+  };
+  new MutationObserver(() => {
+    if (queued) return;               // one restore per frame, not per mutation
+    queued = true;
+    requestAnimationFrame(restore);
+  }).observe(document.body, {childList: true, subtree: true});
+})();
+</script>"""
+
 # Both of these key on the statusline's open-action tally (#tt-tally) and read
 # the count out of its glyph text: "●6 open  ▶5 running" | "▶2 running" | "all
 # clear". ● prefixes actions and ▶ prefixes tasks, so /●(\d+)/ is unambiguous
@@ -868,6 +927,7 @@ def _action_row(ev, blink, query, changed):
                     ui.label(field).classes("lb")
                     _cell(ev.get(field, ""), query)
             _art_sub(ev)
+            _reply_sub(ev)
 
 
 def _task_row(ev, query, changed, blocked=None):
@@ -918,6 +978,32 @@ def _task_row(ev, query, changed, blocked=None):
                     ui.label("int").classes("lb")
                     _cell(ev["intuitive"], query)
             _art_sub(ev)
+            _reply_sub(ev)
+
+
+def _reply_sub(ev):
+    """A box to compose an answer to this row, and copy it ready to paste.
+
+    Under EVERY action and task, done ones included: a finished row is still
+    something you may want to follow up on. It is a raw textarea rather than a
+    NiceGUI input because the wall rebuilds wholesale on every poll - the
+    draft, the focus and the caret are kept in the page by REPLY_JS, which a
+    server-side widget cannot do.
+    """
+    from nicegui import ui
+    ident = str(ev.get("id", ""))
+    with ui.element("div").classes("sub reply"):
+        ui.label("you").classes("lb")
+        with ui.element("div").classes("reply-box"):
+            ta = ui.element("textarea").classes("reply-in")
+            ta.props["data-reply"] = ident
+            ta.props["rows"] = "1"
+            ta.props["placeholder"] = f"answer {ident} - copies as '{ident}: ...'"
+            btn = ui.element("button").classes("lk reply-copy")
+            btn.props["data-reply-copy"] = ident
+            btn.props["title"] = f"copy '{ident}: your answer' to paste in your session"
+            with btn:
+                ui.label("copy")
 
 
 def _term_row(ev, query):
@@ -975,6 +1061,7 @@ def _done_row(ev, query):
         with ui.element("div"):
             _cell(ev.get("background") or ev.get("what", ""), query, "ttl")
             _art_sub(ev)
+            _reply_sub(ev)
 
 
 def _hits(evs, query):
@@ -1805,7 +1892,7 @@ def selftest():
         "open_acts is in the paint signature: a window must repaint when its " \
         "blocker is answered, which changes nothing in its own file"
     assert ".blk" in css, "a blocked task needs to look different from a running one"
-    assert 'ctx.append(("settings file", cfg_path))' in code, \
+    assert 'ctx.append(("📄 settings file", cfg_path))' in code, \
         "the raw file must stay one click away even now the form exists: " \
         "colour tokens and extra_roots are not in the form, and a normal " \
         "install does not otherwise have this file at all"
@@ -1862,16 +1949,6 @@ def selftest():
     import tempfile as _t
     import tt_jobs as _J
 
-    # The dialog RENDERS; tt_jobs decides. Those decisions are pinned by
-    # behaviour in tt_jobs' own selftest - these pins only hold the wiring.
-    _panel = code.split("def job_panel")[1].split("def cycle_theme")[0]
-    assert "tt_jobs.form_blocked(cfg[\"server\"][\"host\"], roots)" in _panel, \
-        "whether the form opens at all must come from tt_jobs, not from a " \
-        "condition written here where no test can reach it"
-    assert "await start_job(cfg[\"server\"][\"host\"], roots," in _panel, \
-        "starting a job must go through start_job, which a test can CALL - " \
-        "every shape that kept this logic in the dialog could only be pinned " \
-        "by a grep, and a grep cannot fail"
 
     # start_job, called for real with a fake runner: this is the enforcement
     # that three reviews found untestable.
@@ -1905,17 +1982,31 @@ def selftest():
             f"{_label} must stop the job BEFORE the runner is reached"
         assert _said and _said[0][0] == "deny" and _said[0][1], \
             f"{_label} must say why in the panel, or it reads as a dead button"
-    assert "link_roots" not in _panel and "cwd = " not in _panel, \
-        "the job's directory comes from job_request's resolved spec, never " \
-        "from link_roots - a link-confinement list that put four of five " \
-        "projects in the dashboard's own directory"
-    assert 'f"{n} - {r}"' in _panel, \
-        "the select must show the DIRECTORY beside the name: projects are " \
-        "keyed on a directory basename, so two repos both called `api` are " \
-        "one entry and the user would pick a name and get the other one"
-    assert ".job-deny" in css and ".job{" in css, \
-        "a refusal must LOOK like one, or a job the dashboard stopped reads " \
-        "as the model failing"
+    # The reply box: under every action and task, and under the done rows too.
+    assert code.count("            _reply_sub(ev)") == 3, \
+        "an answer box belongs under every action, every task AND every done " \
+        "row - a finished item is still something worth following up on, and " \
+        "the user asked for all of them"
+    assert REPLY_JS.index("[0-9a-f]{4,}") < REPLY_JS.index("writeText"), \
+        "the id must be checked BEFORE anything reaches the clipboard, or a " \
+        "stray data-reply-copy attribute copies arbitrary text"
+    assert "id + ': ' + text" in REPLY_JS, \
+        "the clipboard line is `<id>: <answer>`, which is the format the " \
+        "protocol asks the user to reply in - copying the bare answer would " \
+        "lose the one thing that says WHICH row it answers"
+    assert "drafts.set" in REPLY_JS and "setSelectionRange" in REPLY_JS, \
+        "the draft and the caret must be kept in the PAGE: the wall calls " \
+        "container.clear() on every poll, so a server-side input loses both " \
+        "every two seconds and a considered answer cannot be typed at all"
+    assert "requestAnimationFrame(restore)" in REPLY_JS, \
+        "and the restore runs once per frame, not once per mutation - the " \
+        "observer fires for every node the rebuild touches"
+    assert "mousedown" in REPLY_JS, \
+        "a deliberate click elsewhere gives up the caret, or the restore " \
+        "yanks focus back out of whatever the reader clicked next"
+    assert ".reply-in" in css and ".reply-box" in css, \
+        "the box needs styling, or it renders as an unthemed browser textarea " \
+        "inside a themed app"
 
     # run_job, driven by a FAKE client so the suite never starts a session,
     # needs credentials, or costs money.
@@ -2019,7 +2110,7 @@ def selftest():
         "and a refused TOOL CALL must reach the panel too - the README says " \
         "refusals appear there, and only job-level refusals were pinned"
 
-    assert 'ctx.append(("settings ref", ref))' in code, \
+    assert 'ctx.append(("📑 settings ref", ref))' in code, \
         "the drawer must offer the CURRENT documented example: a user's own " \
         "config froze on the day it was created, so every option added since " \
         "- the 15 themes, this host key - is invisible in the only file the " \
@@ -2196,6 +2287,7 @@ def main(port=None):
     if (over := theme_css(cfg["theme"])):     # AFTER tt.css, or it overrides nothing
         ui.add_head_html(f"<style>{over}</style>")
     ui.add_head_html(COPY_JS)
+    ui.add_head_html(REPLY_JS)
     ui.add_head_html(TAB_TITLE_JS)
     ui.add_head_html(TOAST_JS)
     ui.add_head_html(BLUR_JS)
@@ -2302,10 +2394,10 @@ def main(port=None):
                 ctx = []
                 nearest = nearest_claude_md(Path.cwd(), Path.home())
                 if nearest:
-                    ctx.append(("CLAUDE.md", nearest))
+                    ctx.append(("📘 CLAUDE.md", nearest))
                 home_claude = Path.home() / ".claude" / "CLAUDE.md"
                 if home_claude.is_file():
-                    ctx.append(("~/.claude/CLAUDE.md", home_claude))
+                    ctx.append(("📗 ~/.claude/CLAUDE.md", home_claude))
                 # The session-memory directory is a DIRECTORY; path_spans only
                 # ever returns files. Rather than teach it (or open_path)
                 # directories, link the representative MEMORY.md inside it - the
@@ -2314,7 +2406,7 @@ def main(port=None):
                 mem_file = (Path.home() / ".claude" / "projects" /
                             str(Path.cwd()).replace("/", "-") / "memory" / "MEMORY.md")
                 if mem_file.is_file():
-                    ctx.append(("memory", mem_file))
+                    ctx.append(("🧠 memory", mem_file))
                 # Settings last: it is the one entry that is always present,
                 # because unlike the others it CREATES its file when missing.
                 if (cfg_path := ensure_config()):
@@ -2325,19 +2417,14 @@ def main(port=None):
                     btn = ui.element("button").classes("lk dw-ctx-i")
                     btn.props["title"] = "edit settings"
                     with btn:
-                        ui.label("settings")
+                        ui.label("⚙ settings")
                     btn.on("click", lambda _: open_settings(cfg_path))
-                    ctx.append(("settings file", cfg_path))
+                    ctx.append(("📄 settings file", cfg_path))
                     # The current documented example, refreshed on every start.
                     # Without it the only reference a user has is their own
                     # file, which froze on the day it was created.
                     if (ref := cfg_path.parent / "config.example.toml").is_file():
-                        ctx.append(("settings ref", ref))
-                    jb = ui.element("button").classes("lk dw-ctx-i")
-                    jb.props["title"] = "start a job"
-                    with jb:
-                        ui.label("job")
-                    jb.on("click", lambda _: job_panel(cfg))
+                        ctx.append(("📑 settings ref", ref))
                 if ctx:
                     with ui.element("div").classes("dw-ctx"):
                         for label, p in ctx:
@@ -2489,63 +2576,6 @@ def main(port=None):
                 port_go.set_visibility(True)
 
         save.on("click", do_save)
-        dlg.open()
-
-    def job_panel(cfg):
-        """Render what tt_jobs.job_request decides. It renders; it never decides.
-
-        Every check that matters lives in job_request, which a test can call.
-        The previous shape put them here, and a mutation that kept the call and
-        overwrote its answer left the whole suite green.
-        """
-        roots = M.project_roots({f.stem: M.fold_cached(f)
-                                 for f in DATA_DIR.glob("*.jsonl")})
-        # Labelled by name AND directory: projects are keyed on a directory
-        # BASENAME, so two repos both called `api` are one entry, and the user
-        # would otherwise pick a name and get the other one.
-        labels = {f"{n} - {r}": n for n, r in sorted(roots.items())}
-        with ui.dialog() as dlg, ui.element("div").classes("job"):
-            ui.label("start a job").classes("cfg-h")
-            if (blocked := tt_jobs.form_blocked(cfg["server"]["host"], roots)):
-                # No start control EXISTS on this path, rather than a disabled
-                # one: there is nothing here to re-enable.
-                ui.label(blocked).classes("job-deny")
-                with ui.element("div").classes("cfg-act"):
-                    b = ui.element("button").classes("lk")
-                    with b:
-                        ui.label("close")
-                    b.on("click", lambda _: dlg.close())
-                dlg.open()
-                return
-            proj = ui.select(sorted(labels), value=sorted(labels)[0])
-            text = ui.textarea("what should it do?")
-            tools = ui.select(["Read", "Grep", "Glob", "Edit", "Write", "Bash"],
-                              multiple=True, value=["Read", "Grep", "Glob"])
-            bash = ui.input("allowed shell commands, comma separated",
-                            placeholder="pytest, git status, git commit")
-            out = ui.element("div").classes("job-out")
-            with ui.element("div").classes("cfg-act"):
-                go = ui.element("button").classes("lk")
-                with go:
-                    ui.label("start")
-                shut = ui.element("button").classes("lk")
-                with shut:
-                    ui.label("close")
-                shut.on("click", lambda _: dlg.close())
-
-            def feed(kind, body):
-                with out:
-                    ui.label(body if kind != "done" else "- finished -") \
-                        .classes(f"job-{kind}")
-
-            async def start(_):
-                pats = tuple(x.strip() for x in (bash.value or "").split(",")
-                             if x.strip())
-                await start_job(cfg["server"]["host"], roots,
-                                labels.get(proj.value, ""), text.value or "",
-                                tuple(tools.value or ()), pats, feed)
-
-            go.on("click", start)
         dlg.open()
 
     def cycle_theme():
