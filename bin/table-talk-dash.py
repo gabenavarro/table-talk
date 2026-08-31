@@ -1,7 +1,7 @@
 #!/usr/bin/env -S uv run --script
 # /// script
 # requires-python = ">=3.12"
-# dependencies = ["nicegui>=3.16,<4"]
+# dependencies = ["nicegui>=3.16,<4", "claude-agent-sdk>=0.2,<0.3"]
 # ///
 """table-talk dashboard: live NiceGUI view of the table-talk event logs."""
 import argparse
@@ -16,6 +16,7 @@ from pathlib import Path
 
 import tt_config
 import tt_model as M
+import tt_jobs
 from tt_model import DATA_DIR, fold_cached
 
 # Persistence belongs to the DATA, not to the shell that launched the server.
@@ -647,6 +648,108 @@ def coerce(kind, bounds, value, like):
     if not (lo <= num <= hi):
         return None
     return float(num) if isinstance(like, float) else int(num)
+
+
+async def start_job(cfg_host, roots, name, text, tools, bash, feed,
+                    runner=None):
+    """Ask tt_jobs whether this job may run, then run it. Returns the spec or None.
+
+    Module level, and the runner is injectable, PRECISELY so a test can call
+    the code that enforces the decision. Every earlier shape kept this logic
+    inside the dialog, where the only possible pin was a grep - and a mutation
+    that kept the call to job_request and overwrote its answer left the whole
+    suite green, three reviews running.
+    """
+    spec, refusal = tt_jobs.job_request(cfg_host, roots, name, text, tools, bash)
+    if spec is None:
+        feed("deny", refusal)
+        return None
+    feed("tool", f"session {tt_jobs.job_sid(spec)} in {spec.project} ({spec.cwd})")
+    await (runner or run_job)(spec, feed)
+    return spec
+
+
+async def run_job(spec, on_event, client_factory=None):
+    """Drive one job to completion, reporting as it goes.
+
+    ClaudeAgentOptions and HookMatcher are duck-typed locally and the SDK
+    import is confined to the real branch, so with a client_factory injected
+    this never touches claude_agent_sdk at all: nothing in ./test.sh starts
+    a session, needs credentials, or costs money.
+
+    The SDK IS declared in this file's PEP 723 dependencies. It was dropped
+    once, to keep the suite resolvable offline - but `uv run --script` builds
+    an isolated environment from that header, so the real branch then had no
+    SDK to import and every job on a clean install failed with advice that
+    cannot be followed in a script env. It only appeared to work because uv
+    reused a stale cached environment from when the dependency was declared.
+    """
+    import tt_jobs as J
+
+    class ClaudeAgentOptions:
+        def __init__(self, **kw): self.__dict__.update(kw)
+
+    class HookMatcher:
+        def __init__(self, hooks): self.hooks = hooks
+
+    def say(kind, body):
+        """A panel that throws must not take the job or the page with it."""
+        try:
+            on_event(kind, body)
+        except Exception:
+            logging.exception("job panel raised on %s", kind)
+
+    if client_factory is None:                      # pragma: no cover - real path
+        try:
+            from claude_agent_sdk import (ClaudeSDKClient, ClaudeAgentOptions,
+                                          HookMatcher)
+        except ImportError:
+            say("error", "claude-agent-sdk is not installed: "
+                         "pip install claude-agent-sdk")
+            return spec.session_id
+        client_factory = ClaudeSDKClient
+
+    async def gate(payload, tool_use_id, context):
+        allow, why = J.gate_decision(spec, payload.get("tool_name"),
+                                     payload.get("tool_input"))
+        say("tool" if allow else "deny",
+            f"{payload.get('tool_name')}: {why or 'allowed'}")
+        return J.hook_output(allow, why)
+
+    opts = ClaudeAgentOptions(
+        cwd=spec.cwd,
+        session_id=spec.session_id,
+        permission_mode="dontAsk",      # unlisted means denied, never prompted
+        allowed_tools=[],               # everything falls through to the hook
+        hooks={"PreToolUse": [HookMatcher(hooks=[gate])]},
+        # So the job's own table-talk records carry the sid the wall is already
+        # showing: the CLI stamps the first four characters of this variable.
+        env={"CLAUDE_CODE_SESSION_ID": spec.session_id},
+        # "user" only. Left at the default, the session also loads the CHOSEN
+        # PROJECT's .claude/settings.json - whose PreToolUse and SessionStart
+        # hooks are shell commands this gate never sees. A freshly cloned repo
+        # is exactly the thing a job gets pointed at. The user's own settings
+        # stay, because that is where the table-talk skill lives and the wall
+        # recording depends on it.
+        setting_sources=["user"],
+        # And no MCP server the job did not ask for: project .mcp.json would
+        # otherwise be spawned as subprocesses outside the gate.
+        strict_mcp_config=True,
+        # Without this the SDK passes an EMPTY --system-prompt and the session
+        # gets none of Claude Code's own.
+        system_prompt={"type": "preset", "preset": "claude_code"},
+    )
+    try:
+        async with client_factory(options=opts) as client:
+            await client.query(spec.text)
+            async for msg in client.receive_response():
+                for block in getattr(msg, "content", []) or []:
+                    if (text := getattr(block, "text", None)):
+                        say("text", text)
+        say("done", "")
+    except Exception as e:                          # a job must not kill the page
+        say("error", str(e))
+    return spec.session_id
 
 
 def ensure_config(path=None, example=None):
@@ -1754,6 +1857,168 @@ def selftest():
     assert ".cfg-row" in css and ".cfg{" in css, \
         "the form needs its own styling in the sheet, or it renders as " \
         "unthemed browser defaults inside a themed app"
+    import asyncio as _aio
+    import os as _os
+    import tempfile as _t
+    import tt_jobs as _J
+
+    # The dialog RENDERS; tt_jobs decides. Those decisions are pinned by
+    # behaviour in tt_jobs' own selftest - these pins only hold the wiring.
+    _panel = code.split("def job_panel")[1].split("def cycle_theme")[0]
+    assert "tt_jobs.form_blocked(cfg[\"server\"][\"host\"], roots)" in _panel, \
+        "whether the form opens at all must come from tt_jobs, not from a " \
+        "condition written here where no test can reach it"
+    assert "await start_job(cfg[\"server\"][\"host\"], roots," in _panel, \
+        "starting a job must go through start_job, which a test can CALL - " \
+        "every shape that kept this logic in the dialog could only be pinned " \
+        "by a grep, and a grep cannot fail"
+
+    # start_job, called for real with a fake runner: this is the enforcement
+    # that three reviews found untestable.
+    _sj_dir = _t.mkdtemp()
+    _os.makedirs(_sj_dir + "/proj/.git", exist_ok=True)
+    _sj_roots = {"proj": _sj_dir + "/proj"}
+    _ran = []
+
+    async def _fake_runner(spec, feed):
+        _ran.append(spec)
+
+    def _sj(host="127.0.0.1", roots=None, name="proj", text="do it",
+            tools=("Read",), bash=()):
+        _ran.clear()
+        said = []
+        got = _aio.run(start_job(host, _sj_roots if roots is None else roots,
+                                 name, text, tools, bash,
+                                 lambda k, t: said.append((k, t)), _fake_runner))
+        return got, said
+
+    _spec_ok, _said = _sj()
+    assert _spec_ok is not None and len(_ran) == 1, "the ordinary case runs"
+    for _label, _kw in (("a networked dashboard", {"host": "0.0.0.0"}),
+                        ("no known projects", {"roots": {}}),
+                        ("an unknown project", {"name": "nope"}),
+                        ("an empty instruction", {"text": "  "}),
+                        ("an unsafe pattern", {"tools": ("Bash",), "bash": ("find",)}),
+                        ("a hostile root", {"roots": {"proj": "/"}})):
+        _got, _said = _sj(**_kw)
+        assert _got is None and not _ran, \
+            f"{_label} must stop the job BEFORE the runner is reached"
+        assert _said and _said[0][0] == "deny" and _said[0][1], \
+            f"{_label} must say why in the panel, or it reads as a dead button"
+    assert "link_roots" not in _panel and "cwd = " not in _panel, \
+        "the job's directory comes from job_request's resolved spec, never " \
+        "from link_roots - a link-confinement list that put four of five " \
+        "projects in the dashboard's own directory"
+    assert 'f"{n} - {r}"' in _panel, \
+        "the select must show the DIRECTORY beside the name: projects are " \
+        "keyed on a directory basename, so two repos both called `api` are " \
+        "one entry and the user would pick a name and get the other one"
+    assert ".job-deny" in css and ".job{" in css, \
+        "a refusal must LOOK like one, or a job the dashboard stopped reads " \
+        "as the model failing"
+
+    # run_job, driven by a FAKE client so the suite never starts a session,
+    # needs credentials, or costs money.
+    import asyncio as _aio
+    import tt_jobs as _J
+
+    class _FakeMsg:
+        def __init__(self, text):
+            self.content = [type("B", (), {"text": text})()]
+
+    class _FakeClient:
+        seen = {}
+
+        def __init__(self, options=None):
+            _FakeClient.seen = dict(options.__dict__)
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def query(self, text):
+            _FakeClient.seen["query"] = text
+
+        async def receive_response(self):
+            yield _FakeMsg("working")
+
+    _spec = _J.mint_job("proj", "/tmp/proj", "do it", tools=("Read",), bash=())
+    _ev = []
+    _aio.run(run_job(_spec, lambda k, t: _ev.append((k, t)), _FakeClient))
+    _got = _FakeClient.seen
+    assert _got["cwd"] == "/tmp/proj" and _got["session_id"] == _spec.session_id, \
+        "the runner must hand the SDK the project root and the id the " \
+        "dashboard minted, or the wall cannot show the job until its first " \
+        "event and the job may run in the wrong directory"
+    assert _got["permission_mode"] == "dontAsk", \
+        "anything the gate does not allow must be DENIED, not prompted for: " \
+        "there is no terminal here, so a prompt is a hang"
+    assert _got["allowed_tools"] == [], \
+        "allowed_tools must stay EMPTY - a whole-tool entry auto-approves " \
+        "before the hook is consulted, which is how a gate ends up never running"
+    assert "PreToolUse" in _got["hooks"], \
+        "the gate must be a PreToolUse hook: it runs ahead of the ambient " \
+        "allow rules that would otherwise shadow it"
+    assert _got["setting_sources"] == ["user"] and _got["strict_mcp_config"] is True, \
+        "the CHOSEN PROJECT's own .claude/settings.json and .mcp.json must " \
+        "NOT be loaded: their hooks are shell commands and their servers are " \
+        "subprocesses, none of which this job's gate ever sees, and a freshly " \
+        "cloned repo is exactly what a job gets pointed at"
+    assert _got["system_prompt"] == {"type": "preset", "preset": "claude_code"}, \
+        "unset, the SDK passes an EMPTY --system-prompt and the session gets " \
+        "none of Claude Code's own"
+    assert "claude-agent-sdk" in Path(__file__).read_text()[:400], \
+        "the SDK must be in this file's PEP 723 dependencies: uv run --script " \
+        "builds an isolated env from that header, so without it the real " \
+        "branch has nothing to import and every job on a clean install fails " \
+        "- which already happened once"
+    assert _got["env"]["CLAUDE_CODE_SESSION_ID"] == _spec.session_id, \
+        "the job's own table-talk records must carry the sid the wall is " \
+        "already showing, and the CLI reads it from this variable - without " \
+        "it the README's promise that jobs appear on the wall is false"
+    assert _J.job_sid(_spec) == _spec.session_id[:4], \
+        "and that sid is the first four characters, which is what the CLI stamps"
+    assert ("text", "working") in _ev and any(k == "done" for k, _ in _ev), \
+        "the panel is fed as the session speaks, not once at the end"
+
+    # The hook the runner INSTALLED must be the gate tt_jobs pins - a gate
+    # tested in isolation from the one that runs is not tested.
+    _hook = _got["hooks"]["PreToolUse"][0].hooks[0]
+    _out = _aio.run(_hook({"tool_name": "Nope", "tool_input": {}}, "id", None))
+    assert _out["hookSpecificOutput"]["permissionDecision"] == "deny", \
+        "the installed hook must deny what gate_decision denies"
+
+    # A panel that throws must not take the job or the page down with it.
+    def _boom(kind, body):
+        raise RuntimeError("panel is broken")
+    _aio.run(run_job(_spec, _boom, _FakeClient))
+
+    # run_job's own failure and refusal paths, unpinned until a mutation showed
+    # it: deleting the gate's panel line, or swallowing the session's exception,
+    # both left the suite green.
+    class _AngryClient(_FakeClient):
+        async def receive_response(self):
+            raise RuntimeError("the session fell over")
+            yield  # pragma: no cover - makes this an async generator
+
+    _said = []
+    _aio.run(run_job(_spec, lambda k, t: _said.append((k, t)), _AngryClient))
+    assert ("error", "the session fell over") in _said, \
+        "a session that dies must SAY so in the panel: swallowed, the job " \
+        "just stops and the user is left watching a dead dialog"
+    _said.clear()
+    _hook2 = _FakeClient.seen["hooks"]["PreToolUse"][0].hooks[0]
+    _aio.run(run_job(_spec, lambda k, t: _said.append((k, t)), _FakeClient))
+    _gate = _FakeClient.seen["hooks"]["PreToolUse"][0].hooks[0]
+    _said.clear()
+    _aio.run(_gate({"tool_name": "Bash", "tool_input": {"command": "rm -rf /"}},
+                   "id", None))
+    assert _said and _said[0][0] == "deny" and "Bash" in _said[0][1], \
+        "and a refused TOOL CALL must reach the panel too - the README says " \
+        "refusals appear there, and only job-level refusals were pinned"
+
     assert 'ctx.append(("settings ref", ref))' in code, \
         "the drawer must offer the CURRENT documented example: a user's own " \
         "config froze on the day it was created, so every option added since " \
@@ -2068,6 +2333,11 @@ def main(port=None):
                     # file, which froze on the day it was created.
                     if (ref := cfg_path.parent / "config.example.toml").is_file():
                         ctx.append(("settings ref", ref))
+                    jb = ui.element("button").classes("lk dw-ctx-i")
+                    jb.props["title"] = "start a job"
+                    with jb:
+                        ui.label("job")
+                    jb.on("click", lambda _: job_panel(cfg))
                 if ctx:
                     with ui.element("div").classes("dw-ctx"):
                         for label, p in ctx:
@@ -2219,6 +2489,63 @@ def main(port=None):
                 port_go.set_visibility(True)
 
         save.on("click", do_save)
+        dlg.open()
+
+    def job_panel(cfg):
+        """Render what tt_jobs.job_request decides. It renders; it never decides.
+
+        Every check that matters lives in job_request, which a test can call.
+        The previous shape put them here, and a mutation that kept the call and
+        overwrote its answer left the whole suite green.
+        """
+        roots = M.project_roots({f.stem: M.fold_cached(f)
+                                 for f in DATA_DIR.glob("*.jsonl")})
+        # Labelled by name AND directory: projects are keyed on a directory
+        # BASENAME, so two repos both called `api` are one entry, and the user
+        # would otherwise pick a name and get the other one.
+        labels = {f"{n} - {r}": n for n, r in sorted(roots.items())}
+        with ui.dialog() as dlg, ui.element("div").classes("job"):
+            ui.label("start a job").classes("cfg-h")
+            if (blocked := tt_jobs.form_blocked(cfg["server"]["host"], roots)):
+                # No start control EXISTS on this path, rather than a disabled
+                # one: there is nothing here to re-enable.
+                ui.label(blocked).classes("job-deny")
+                with ui.element("div").classes("cfg-act"):
+                    b = ui.element("button").classes("lk")
+                    with b:
+                        ui.label("close")
+                    b.on("click", lambda _: dlg.close())
+                dlg.open()
+                return
+            proj = ui.select(sorted(labels), value=sorted(labels)[0])
+            text = ui.textarea("what should it do?")
+            tools = ui.select(["Read", "Grep", "Glob", "Edit", "Write", "Bash"],
+                              multiple=True, value=["Read", "Grep", "Glob"])
+            bash = ui.input("allowed shell commands, comma separated",
+                            placeholder="pytest, git status, git commit")
+            out = ui.element("div").classes("job-out")
+            with ui.element("div").classes("cfg-act"):
+                go = ui.element("button").classes("lk")
+                with go:
+                    ui.label("start")
+                shut = ui.element("button").classes("lk")
+                with shut:
+                    ui.label("close")
+                shut.on("click", lambda _: dlg.close())
+
+            def feed(kind, body):
+                with out:
+                    ui.label(body if kind != "done" else "- finished -") \
+                        .classes(f"job-{kind}")
+
+            async def start(_):
+                pats = tuple(x.strip() for x in (bash.value or "").split(",")
+                             if x.strip())
+                await start_job(cfg["server"]["host"], roots,
+                                labels.get(proj.value, ""), text.value or "",
+                                tuple(tools.value or ()), pats, feed)
+
+            go.on("click", start)
         dlg.open()
 
     def cycle_theme():

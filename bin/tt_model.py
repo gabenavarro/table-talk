@@ -219,6 +219,28 @@ def group_sessions(sessions):
     return groups
 
 
+def project_roots(states_by_file):
+    """{project: absolute root} from the newest record that carries one.
+
+    The wall renders a project NAME; a job needs its directory. Only records
+    written from inside the project carry `root`, so a project with no such
+    record simply has no entry - and the caller must refuse rather than guess.
+    Guessing is what put jobs in the dashboard's own directory.
+    """
+    best = {}
+    for stem, states in states_by_file.items():
+        date, proj = parse_stem(stem)
+        if not date:
+            continue
+        for ev in states.values():
+            root, ts = ev.get("root"), ev.get("ts")
+            if not isinstance(root, str) or not isinstance(ts, int):
+                continue
+            if proj not in best or ts > best[proj][1]:
+                best[proj] = (root, ts)
+    return {k: v[0] for k, v in best.items()}
+
+
 def merge_projects(sessions):
     """[(stem, state)] -> {project: one merged state}, every event tagged with
     the session that recorded it. The tag is the event's own session code, or
@@ -892,6 +914,27 @@ def selftest():
         "the scheme must start the token, or the TAIL of a word becomes a link"
     assert url_spans("(https://x/y)") == [(1, 12, "https://x/y")], \
         "surrounding brackets are not part of the URL"
+    # project_roots: the wall renders a NAME; a job needs a directory, and a
+    # wrong one runs an agent with Edit and Bash in the wrong repository.
+    roots = project_roots({
+        "2026-01-01-proj": {"a": {"ts": 10, "root": "/old/proj"}},
+        "2026-01-02-proj": {"b": {"ts": 20, "root": "/new/proj"}},
+        "2026-01-02-noroot": {"c": {"ts": 30}},
+        "not-a-stem": {"d": {"ts": 40, "root": "/nope"}},
+    })
+    assert roots["proj"] == "/new/proj", \
+        "the NEWEST record wins: a project that moved must not keep sending " \
+        "jobs to where it used to live"
+    assert "noroot" not in roots, \
+        "a project with no recorded root must be ABSENT, not guessed: every " \
+        "guess here is an agent running with Edit and Bash somewhere the user " \
+        "did not choose"
+    assert "not-a-stem" not in roots and len(roots) == 1, \
+        "a file whose name is not a dated stem contributes nothing"
+    assert project_roots({"2026-01-01-p": {"a": {"ts": "x", "root": "/r"}},
+                          "2026-01-02-p": {"b": {"ts": 1, "root": 5}}}) == {}, \
+        "a non-numeric ts or a non-string root is skipped, not crashed on - " \
+        "these files are append-only text anyone can hand-edit"
     print("ok")
 
 

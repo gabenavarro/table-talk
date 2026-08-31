@@ -148,6 +148,23 @@ def session_code(env=None):
     return ((env if env is not None else os.environ).get("CLAUDE_CODE_SESSION_ID") or "")[:4]
 
 
+def project_root(project, cwd=None):
+    """The directory this record PROVES the project lives in, or None.
+
+    Only when the project was derived from the working directory: then cwd is
+    that project, by definition. With an explicit --project the caller is
+    recording into some other project from somewhere else, and this cwd says
+    nothing about where that project is. Guessing there is exactly how a job
+    ends up running in the wrong repository.
+    """
+    if project:
+        return None
+    try:
+        return str((cwd or Path.cwd()).resolve())
+    except OSError:
+        return None
+
+
 def add_event(project, fields):
     f = session_file(project)
     with mint_lock():
@@ -155,6 +172,8 @@ def add_event(project, fields):
         ev = {"id": i, "ts": int(time.time()), **fields}
         if (s := session_code()):
             ev.setdefault("sid", s)
+        if (r := project_root(project)):
+            ev.setdefault("root", r)
         append(f, ev)
     return i
 
@@ -617,6 +636,20 @@ def selftest():
         # payload, and NiceGUI requires orjson).
         assert scrub("bad \udcff") == "bad \\udcff" and scrub(42) == 42, \
             "the escape names the byte that would not decode; '?' would not"
+        # add_event must actually STAMP the root, not merely be able to
+        # compute one: the pure function passing proves nothing about the
+        # write, and the wall reads the file, not the function.
+        i_here = add_event(None, {"type": "task", "status": "open", "what": "here"})
+        here_ev = fold(session_file(None))[i_here]
+        assert here_ev.get("root") == str(Path.cwd().resolve()), \
+            "an event recorded from inside a project must carry that " \
+            "directory, or nothing downstream can ever find the project on " \
+            "disk and a job has nowhere correct to run"
+        i_there = add_event("elsewhere", {"type": "task", "status": "open", "what": "x"})
+        assert "root" not in fold(session_file("elsewhere"))[i_there], \
+            "and an explicit --project must stamp NOTHING: this cwd is not " \
+            "that project, and recording it would point a job at the wrong " \
+            "repository with Edit and Bash in hand"
         i_bad = add_event("proj", {"type": "task", "status": "open", "what": "log \udcfe"})
         got = fold(f)[i_bad]["what"]
         assert got == "log \\udcfe", "a surrogate is escaped at the write boundary"
@@ -780,6 +813,16 @@ def selftest():
             raise AssertionError(f"blocker({bad!r}) must refuse: {why}")
         except SystemExit:
             pass
+
+    # project_root: the wall cannot start a job in a project whose directory
+    # it does not know, and it must never GUESS one.
+    assert project_root(None, Path("/tmp")) == str(Path("/tmp").resolve()), \
+        "a project derived from the cwd IS that cwd, and recording it is the " \
+        "only way anything downstream can find the project on disk"
+    assert project_root("other-proj", Path("/tmp")) is None, \
+        "an explicit --project says nothing about where THAT project is: " \
+        "stamping this cwd would point a job at the wrong repository, which " \
+        "is the bug this field exists to fix"
 
     # stale_hundreds: a task that says it is finished but was never closed.
     open_act = {"type": "action", "status": "open"}

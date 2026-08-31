@@ -192,6 +192,48 @@ wifi. The dashboard says so on startup when it binds beyond localhost. Only two
 values are accepted; anything else falls back to `127.0.0.1` with a warning,
 so a typo can never widen exposure.
 
+## Starting work from the wall
+
+The drawer's `job` button starts a Claude session in a project the wall already
+knows, streams it into the panel, and records its work on the wall — the
+dashboard mints the session id, so the job's rows appear under their own session
+code from the first event.
+
+Only projects whose directory has been recorded are offered. The CLI stamps that
+directory when you record from inside the project, so run any `table-talk`
+command there once and it appears. A project whose directory is unknown is not
+offered at all, because the alternative is guessing and a wrong guess runs an
+agent with `Edit` and `Bash` somewhere you did not choose.
+
+Every tool call is decided by the dashboard through a `PreToolUse` hook — the
+one mechanism nothing can shadow, since it runs ahead of deny rules, ask rules,
+permission mode and the allow rules already in your settings. You choose the
+tools when you start the job:
+
+- **File paths are confined to the project.** A tool name is not enough: `Read`
+  takes an absolute path, so without this a job whose only tool is `Read` could
+  read `~/.ssh/id_ed25519` and stream it into your browser.
+- **Shell commands are matched against patterns you list.** `git commit` permits
+  `git commit -m x` and refuses `git commit && git push`; chaining, redirection
+  and substitution are refused rather than parsed. Quoting is respected, so a
+  commit message may contain `&`, while `$(` is refused even inside double
+  quotes — where a shell would still expand it.
+- **Some patterns are refused outright.** `find . -exec rm -rf / {} +` contains
+  no metacharacter at all, so `find`, `xargs`, `sudo`, `sh` and friends cannot
+  be made safe by checking arguments. Bare `git` is refused too, because
+  `git -c alias.z=...` runs anything; `git commit` does not.
+
+Anything unlisted is denied, and the refusal appears in the panel — a job the
+dashboard stopped should not read as the model failing.
+
+**Jobs are disabled unless the dashboard is bound to `127.0.0.1`.** This page
+has no password and a job can run commands; a dashboard that also listens on
+every interface is a remote shell for anyone on the network. Not configurable.
+
+The dashboard can only drive sessions it starts. There is no supported way for
+an outside process to send a message into a Claude session running in your
+terminal, and this deliberately does not try.
+
 ## Themes
 
 Fifteen terminal palettes ship in `bin/themes.json`, converted from
