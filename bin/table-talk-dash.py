@@ -2471,7 +2471,8 @@ def main(port=None):
                 spec = tt_jobs.mint_job(proj.value, cwd, text.value or "",
                                         tools=tuple(tools.value or ()),
                                         bash=pats)
-                feed("tool", f"session {tt_jobs.job_sid(spec)} in {cwd}")
+                feed("tool", f"session {tt_jobs.job_sid(spec)} "
+                             f"in {spec.project} ({cwd})")
                 await run_job(spec, feed)
 
             go.on("click", start)

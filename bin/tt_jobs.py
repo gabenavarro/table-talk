@@ -206,6 +206,10 @@ def hook_output(allow, reason):
 def selftest():
     spec = mint_job("proj", "/tmp/proj", "do a thing",
                     tools=("Read", "Edit", "Bash"), bash=("pytest", "git commit"))
+    assert spec.project == "proj" and spec.cwd == "/tmp/proj", \
+        "the job carries the project it belongs to as well as the path: the " \
+        "panel names both, because a bare absolute path does not tell the " \
+        "reader which project's wall the job's rows will land on"
     assert len(spec.session_id) == 36 and job_sid(spec) == spec.session_id[:4], \
         "the sid must be the first four characters of the minted id: it is " \
         "what table-talk stamps, and the wall cannot show the job before its " \
