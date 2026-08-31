@@ -6,6 +6,7 @@ with no credentials and no cost, and a gate that can only be exercised by
 starting a real session is a gate nobody tests.
 """
 import argparse
+import shlex
 import uuid
 from pathlib import Path
 from dataclasses import dataclass
@@ -89,13 +90,14 @@ def pattern_problem(pattern):
     `find` cannot be made safe by inspecting arguments, so the honest place to
     refuse it is before the job exists.
     """
-    raw, _, rest = pattern.strip().partition(" ")
+    parts = pattern.strip().split(None, 1)
+    raw, rest = (parts + [""])[:2]
     if not raw:
         return "an empty pattern would match nothing"
     # Path(...).name so /bin/sh and /usr/bin/env are the same answer as sh and
     # env: a denylist matched on the literal head is one absolute path away
     # from being no denylist at all.
-    head = Path(raw).name
+    head = Path(raw.lstrip("\\")).name
     if rest.strip().split(" ")[0] in _RUNNER_SUBCOMMANDS and head in _NEEDS_SUBCOMMAND:
         return (f"{raw + ' ' + rest.strip()!r} runs whatever follows it - a "
                 f"subcommand does not make a runner safe")
@@ -145,7 +147,7 @@ def unquoted_meta(command):
     return "an unbalanced quote" if q else None
 
 
-def bash_allowed(patterns, command):
+def bash_allowed(patterns, command, root=None):
     """(ok, reason) - may this shell command run under these patterns?
 
     A pattern permits a command it PREFIXES on a token boundary, so
@@ -163,6 +165,21 @@ def bash_allowed(patterns, command):
         if pattern_problem(p):
             continue                     # never honour a pattern we would refuse
         if cmd == p or cmd[len(p):len(p) + 1] in (" ", "\t") and cmd.startswith(p):
+            if root is None:
+                return True, ""
+            # Arguments address the filesystem too: `git commit
+            # --file=/etc/shadow` matched the pattern and read outside the
+            # project. Safe to shlex - the scan above proved this is ONE
+            # simple command with no substitution.
+            try:
+                toks = shlex.split(cmd)
+            except ValueError:
+                return False, "the command does not parse as a single command"
+            for tok in toks:
+                for part in (tok, tok.split("=", 1)[-1]):
+                    if looks_like_path(part) and not path_inside(root, part):
+                        return False, (f"{part!r} is outside this job's "
+                                       f"project ({root})")
             return True, ""
     return False, f"no allowed pattern matches: {cmd}"
 
@@ -185,6 +202,26 @@ def path_inside(root, value):
     except (OSError, ValueError, TypeError):
         return False
     return target == base or base in target.parents
+
+
+def path_like_values(obj, _depth=0):
+    """Every string in `obj` that addresses the filesystem, however nested.
+
+    A path inside a list or a nested dict was invisible to a top-level sweep -
+    MultiEdit's `edits` and a tool's options dict both carry them, and this
+    module has no whitelist of tools, so an unknown shape must not be a hole.
+    """
+    if _depth > 6:
+        return
+    if isinstance(obj, str):
+        if looks_like_path(obj):
+            yield obj
+    elif isinstance(obj, dict):
+        for v in obj.values():
+            yield from path_like_values(v, _depth + 1)
+    elif isinstance(obj, (list, tuple)):
+        for v in obj:
+            yield from path_like_values(v, _depth + 1)
 
 
 def looks_like_path(value):
@@ -221,6 +258,12 @@ def usable_root(root):
         return "your home directory is not a project"
     if len(r.parts) < 3:
         return f"{r} is too close to the filesystem root to be a project"
+    if any(part.startswith(".") for part in r.parts):
+        # ~/.ssh and ~/.gnupg cleared every other test here.
+        return f"{r} is a dot-directory, not a project"
+    if not (r / ".git").is_dir():
+        return (f"{r} has no .git, so it is not a project this can run in - "
+                f"a job may commit, and it should be a repository doing it")
     return None
 
 
@@ -280,7 +323,14 @@ def gate_decision(spec, tool_name, tool_input):
         return False, f"this job does not allow {tool_name!r}"
     if tool_name == "Bash":
         cmd = (tool_input or {}).get("command") if isinstance(tool_input, dict) else None
-        return bash_allowed(spec.bash, cmd)
+        return bash_allowed(spec.bash, cmd, spec.cwd)
+    if tool_name in ("Write", "Edit", "NotebookEdit") and isinstance(tool_input, dict):
+        for key in _PATH_KEYS:
+            val = tool_input.get(key)
+            if isinstance(val, str) and ".git" in Path(val).parts:
+                return False, (f"{val!r} is inside .git - writing a hook there "
+                               f"turns any listed build command into arbitrary "
+                               f"execution")
     if isinstance(tool_input, dict):
         for key, val in tool_input.items():
             # Two checks, on purpose. A key KNOWN to carry a path must hold a
@@ -290,10 +340,13 @@ def gate_decision(spec, tool_name, tool_input):
             # hole by default.
             if key in _PATH_KEYS and not isinstance(val, str):
                 return False, f"{key}={val!r} is not a path this job can check"
-            if (key in _PATH_KEYS or looks_like_path(val)) \
-                    and not path_inside(spec.cwd, val):
+            if key in _PATH_KEYS and not path_inside(spec.cwd, val):
                 return False, (f"{key}={val!r} is outside this job's project "
                                f"({spec.cwd})")
+            for found in path_like_values(val):
+                if not path_inside(spec.cwd, found):
+                    return False, (f"{key}={found!r} is outside this job's "
+                                   f"project ({spec.cwd})")
     return True, ""
 
 
@@ -366,6 +419,8 @@ def selftest():
     # so the job's cwd confines nothing on its own - and Read is a default.
     import tempfile as _tf
     _root = _tf.mkdtemp()
+    _os_ = __import__("os")
+    _os_.makedirs(_root + "/.git", exist_ok=True)
     open(_root + "/ok.txt", "w").write("x")
     conf = mint_job("p", _root, "t", tools=("Read", "Write", "Grep"), bash=())
     assert gate_decision(conf, "Read", {"file_path": _root + "/ok.txt"})[0], \
@@ -420,7 +475,7 @@ def selftest():
     # where keeping the call and overwriting its answer left the suite green.
     import tempfile as _t, os as _os
     _d = _t.mkdtemp()
-    _os.makedirs(_d + "/proj", exist_ok=True)
+    _os.makedirs(_d + "/proj/.git", exist_ok=True)
     _good = {"proj": _d + "/proj"}
 
     def _req(**kw):
@@ -479,6 +534,68 @@ def selftest():
         "and every key is checked, not just the first path-shaped one"
     assert gate_decision(_shape, "Grep", {"pattern": "TODO"})[0], \
         "while an argument that is not a path at all is left alone"
+    _os2 = __import__("os")
+    _nogit = _t.mkdtemp() if False else None
+    import tempfile as _t2
+    _plain = _t2.mkdtemp()
+    assert usable_root(_plain), \
+        "a directory with no .git is not a project this may run in: a job can " \
+        "commit, and it should be a repository doing it - and this is the " \
+        "check that stops a hand-edited log pointing a job at /usr/bin"
+    _dot = _t2.mkdtemp() + "/.ssh"
+    _os2.makedirs(_dot + "/.git", exist_ok=True)
+    assert usable_root(_dot), \
+        "and a dot-directory is refused even WITH a .git: ~/.ssh and ~/.gnupg " \
+        "cleared every other test this function makes"
+
+    _bd = _t2.mkdtemp()
+    _os2.makedirs(_bd + "/repo/.git", exist_ok=True)
+    _bspec = mint_job("p", _bd + "/repo", "t", tools=("Bash", "Write"),
+                      bash=("git commit", "pytest"))
+    for _cmd in ("git commit --file=/etc/hostname", "pytest --rootdir=/",
+                 "pytest --co -q /etc"):
+        assert not gate_decision(_bspec, "Bash", {"command": _cmd})[0], \
+            f"a Bash ARGUMENT is a path too: {_cmd!r} matched an allowed " \
+            f"pattern and reached outside the project, so confinement was " \
+            f"true of Read and Write and false of the shell"
+    assert gate_decision(_bspec, "Bash", {"command": "git commit -m ok"})[0] and \
+           gate_decision(_bspec, "Bash", {"command": "pytest -k foo"})[0], \
+        "while ordinary commands with no paths in them still run"
+    assert not gate_decision(_bspec, "Write",
+                             {"file_path": _bd + "/repo/.git/hooks/pre-commit"})[0], \
+        "writing into .git must be refused even though it IS inside the " \
+        "project: a hook written there turns the next listed build command " \
+        "into arbitrary execution, which is the whole allowlist defeated"
+    assert gate_decision(_bspec, "Write", {"file_path": _bd + "/repo/src/x.py"})[0], \
+        "while an ordinary file in the project is still writable"
+
+    assert pattern_problem("uv\trun") and pattern_problem("\\sh"), \
+        "a pattern is tokenised on ANY whitespace and a leading backslash is " \
+        "not a disguise: `uv\\trun` and `\\sh` both walked past the denylist"
+
+    # Error paths must fail CLOSED. Both were unpinned, and mutating either to
+    # return a permissive answer left the whole suite green.
+    assert not path_inside(_d + "/proj", "\x00bad"), \
+        "a path that cannot even be constructed must be DENIED, not allowed: " \
+        "an exception here is not a decision, and failing open on one turns " \
+        "the confinement into a suggestion"
+    assert usable_root("\x00bad"), \
+        "and a root that cannot be constructed is refused, not accepted"
+    # The quote walker's backslash handling: not one command tested it.
+    assert unquoted_meta('a "b\\"c" d') is None, \
+        "an ESCAPED quote inside double quotes does not end the quote, so " \
+        "what follows is still quoted - reading it as unquoted would refuse " \
+        "ordinary commands"
+    assert unquoted_meta("a 'b\\' ; rm'") is not None, \
+        "a backslash inside SINGLE quotes is literal, so that quote CLOSES " \
+        "and the semicolon after it is a real chain - treated as an escape " \
+        "the rest reads as quoted, the string looks balanced, and the chained " \
+        "command is allowed through"
+    assert unquoted_meta("a \\; b") is None and unquoted_meta("a ; b") is not None, \
+        "an escaped separator outside quotes is data; a bare one is a chain"
+    assert hook_output(False, "")["hookSpecificOutput"]["permissionDecisionReason"], \
+        "a deny with no reason given must still CARRY one: the panel shows " \
+        "this text, and a blank refusal reads as the model failing"
     assert pattern_problem("/bin/sh") and pattern_problem("/usr/bin/env"), \
         "the head is matched on its BASENAME: a denylist matched on the " \
         "literal string is one absolute path away from being no denylist"

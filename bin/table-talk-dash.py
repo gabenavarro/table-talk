@@ -674,8 +674,8 @@ async def run_job(spec, on_event, client_factory=None):
 
     ClaudeAgentOptions and HookMatcher are duck-typed locally and the SDK
     import is confined to the real branch, so with a client_factory injected
-    this never touches claude_agent_sdk at all: nothing in ./test.sh needs
-    credentials or costs money.
+    this never touches claude_agent_sdk at all: nothing in ./test.sh starts
+    a session, needs credentials, or costs money.
 
     The SDK IS declared in this file's PEP 723 dependencies. It was dropped
     once, to keep the suite resolvable offline - but `uv run --script` builds
@@ -725,6 +725,19 @@ async def run_job(spec, on_event, client_factory=None):
         # So the job's own table-talk records carry the sid the wall is already
         # showing: the CLI stamps the first four characters of this variable.
         env={"CLAUDE_CODE_SESSION_ID": spec.session_id},
+        # "user" only. Left at the default, the session also loads the CHOSEN
+        # PROJECT's .claude/settings.json - whose PreToolUse and SessionStart
+        # hooks are shell commands this gate never sees. A freshly cloned repo
+        # is exactly the thing a job gets pointed at. The user's own settings
+        # stay, because that is where the table-talk skill lives and the wall
+        # recording depends on it.
+        setting_sources=["user"],
+        # And no MCP server the job did not ask for: project .mcp.json would
+        # otherwise be spawned as subprocesses outside the gate.
+        strict_mcp_config=True,
+        # Without this the SDK passes an EMPTY --system-prompt and the session
+        # gets none of Claude Code's own.
+        system_prompt={"type": "preset", "preset": "claude_code"},
     )
     try:
         async with client_factory(options=opts) as client:
@@ -1863,7 +1876,7 @@ def selftest():
     # start_job, called for real with a fake runner: this is the enforcement
     # that three reviews found untestable.
     _sj_dir = _t.mkdtemp()
-    _os.makedirs(_sj_dir + "/proj", exist_ok=True)
+    _os.makedirs(_sj_dir + "/proj/.git", exist_ok=True)
     _sj_roots = {"proj": _sj_dir + "/proj"}
     _ran = []
 
@@ -1948,6 +1961,19 @@ def selftest():
     assert "PreToolUse" in _got["hooks"], \
         "the gate must be a PreToolUse hook: it runs ahead of the ambient " \
         "allow rules that would otherwise shadow it"
+    assert _got["setting_sources"] == ["user"] and _got["strict_mcp_config"] is True, \
+        "the CHOSEN PROJECT's own .claude/settings.json and .mcp.json must " \
+        "NOT be loaded: their hooks are shell commands and their servers are " \
+        "subprocesses, none of which this job's gate ever sees, and a freshly " \
+        "cloned repo is exactly what a job gets pointed at"
+    assert _got["system_prompt"] == {"type": "preset", "preset": "claude_code"}, \
+        "unset, the SDK passes an EMPTY --system-prompt and the session gets " \
+        "none of Claude Code's own"
+    assert "claude-agent-sdk" in Path(__file__).read_text()[:400], \
+        "the SDK must be in this file's PEP 723 dependencies: uv run --script " \
+        "builds an isolated env from that header, so without it the real " \
+        "branch has nothing to import and every job on a clean install fails " \
+        "- which already happened once"
     assert _got["env"]["CLAUDE_CODE_SESSION_ID"] == _spec.session_id, \
         "the job's own table-talk records must carry the sid the wall is " \
         "already showing, and the CLI reads it from this variable - without " \
@@ -1968,6 +1994,30 @@ def selftest():
     def _boom(kind, body):
         raise RuntimeError("panel is broken")
     _aio.run(run_job(_spec, _boom, _FakeClient))
+
+    # run_job's own failure and refusal paths, unpinned until a mutation showed
+    # it: deleting the gate's panel line, or swallowing the session's exception,
+    # both left the suite green.
+    class _AngryClient(_FakeClient):
+        async def receive_response(self):
+            raise RuntimeError("the session fell over")
+            yield  # pragma: no cover - makes this an async generator
+
+    _said = []
+    _aio.run(run_job(_spec, lambda k, t: _said.append((k, t)), _AngryClient))
+    assert ("error", "the session fell over") in _said, \
+        "a session that dies must SAY so in the panel: swallowed, the job " \
+        "just stops and the user is left watching a dead dialog"
+    _said.clear()
+    _hook2 = _FakeClient.seen["hooks"]["PreToolUse"][0].hooks[0]
+    _aio.run(run_job(_spec, lambda k, t: _said.append((k, t)), _FakeClient))
+    _gate = _FakeClient.seen["hooks"]["PreToolUse"][0].hooks[0]
+    _said.clear()
+    _aio.run(_gate({"tool_name": "Bash", "tool_input": {"command": "rm -rf /"}},
+                   "id", None))
+    assert _said and _said[0][0] == "deny" and "Bash" in _said[0][1], \
+        "and a refused TOOL CALL must reach the panel too - the README says " \
+        "refusals appear there, and only job-level refusals were pinned"
 
     assert 'ctx.append(("settings ref", ref))' in code, \
         "the drawer must offer the CURRENT documented example: a user's own " \
