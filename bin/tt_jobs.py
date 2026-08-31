@@ -67,8 +67,14 @@ _OUTSIDE = (";", "&&", "||", "|", ">", "<", "&", "\n", "\r")
 # pattern - they are refused as patterns rather than gated as commands.
 _MULTIPLEXERS = frozenset((
     "find", "xargs", "env", "sudo", "doas", "nohup", "timeout", "watch",
-    "sh", "bash", "zsh", "dash", "ksh", "eval", "exec", "command",
-    "python", "python3", "perl", "ruby", "node", "ssh", "docker", "podman"))
+    "sh", "bash", "zsh", "dash", "ksh", "eval", "exec", "command", "busybox",
+    "nice", "stdbuf", "setsid", "flock", "script", "chroot", "unshare",
+    "python", "python3", "perl", "ruby", "node", "ssh", "docker", "podman",
+    "awk", "gawk", "sed", "tar", "rsync", "chmod", "chown", "rm", "dd",
+    "install", "ln", "mv", "cp", "curl", "wget", "systemd-run", "at", "crontab"))
+
+# `uv run python -c ...` is arbitrary execution, and so is every sibling.
+_RUNNER_SUBCOMMANDS = frozenset(("run", "exec", "x", "dlx", "tool"))
 
 # Heads safe only with a subcommand: `git -c alias.z='!id' z` runs anything,
 # while `git commit` cannot.
@@ -83,9 +89,16 @@ def pattern_problem(pattern):
     `find` cannot be made safe by inspecting arguments, so the honest place to
     refuse it is before the job exists.
     """
-    head, _, rest = pattern.strip().partition(" ")
-    if not head:
+    raw, _, rest = pattern.strip().partition(" ")
+    if not raw:
         return "an empty pattern would match nothing"
+    # Path(...).name so /bin/sh and /usr/bin/env are the same answer as sh and
+    # env: a denylist matched on the literal head is one absolute path away
+    # from being no denylist at all.
+    head = Path(raw).name
+    if rest.strip().split(" ")[0] in _RUNNER_SUBCOMMANDS and head in _NEEDS_SUBCOMMAND:
+        return (f"{raw + ' ' + rest.strip()!r} runs whatever follows it - a "
+                f"subcommand does not make a runner safe")
     if head in _MULTIPLEXERS:
         return (f"{head!r} runs whatever it is given, so no argument check "
                 f"can make it safe - name the command you actually want")
@@ -158,13 +171,96 @@ _PATH_KEYS = ("file_path", "path", "notebook_path")
 
 
 def path_inside(root, value):
-    """Is `value` a path inside `root` once symlinks are resolved?"""
+    """Is `value` a path inside `root` once symlinks are resolved?
+
+    A RELATIVE value is anchored to `root`, never to whatever directory this
+    process happens to be in. Resolving against the dashboard's own cwd let
+    `../secret` escape one level for every level the dashboard sat below the
+    job - and the dashboard's cwd has nothing to do with the job's.
+    """
     try:
         base = Path(root).resolve()
-        target = Path(value).expanduser().resolve()
+        raw = Path(str(value)).expanduser()
+        target = (raw if raw.is_absolute() else base / raw).resolve()
     except (OSError, ValueError, TypeError):
         return False
     return target == base or base in target.parents
+
+
+def looks_like_path(value):
+    """Does this argument address the filesystem outside the project?
+
+    Checked by SHAPE, not by key name. The first version listed three keys it
+    knew about, so Glob's `pattern` - a DEFAULT tool - walked straight past it
+    and could enumerate /home/**/.ssh. A tool this code has never heard of
+    must not be a hole by default.
+    """
+    return isinstance(value, str) and (value.startswith("/")
+                                       or value.startswith("~")
+                                       or ".." in value.split("/"))
+
+
+def usable_root(root):
+    """Why this recorded directory must not be used as a job root, or None.
+
+    The event log is append-only text anyone can hand-edit, and this field
+    decides where an agent with Edit and Bash will run. One appended line
+    carrying root "/" re-pointed the next job at the filesystem root, where
+    path confinement then permits everything. Trust it as far as it can be
+    checked and no further.
+    """
+    if not isinstance(root, str) or not root.strip():
+        return "no directory recorded"
+    try:
+        r = Path(root).expanduser().resolve()
+    except (OSError, ValueError):
+        return f"{root!r} is not a usable path"
+    if not r.is_dir():
+        return f"{r} is not a directory (any more)"
+    if r == Path.home():
+        return "your home directory is not a project"
+    if len(r.parts) < 3:
+        return f"{r} is too close to the filesystem root to be a project"
+    return None
+
+
+def form_blocked(cfg_host, roots):
+    """Why the job form must not open at all, or None.
+
+    Separate from job_request because it answers a different question: this one
+    decides whether there is a form, that one decides whether a particular job
+    may start. Both are pure so both can be tested by calling them.
+    """
+    ok, why = launch_allowed(cfg_host)
+    if not ok:
+        return why
+    if not roots:
+        return ("no project has recorded its directory yet - run any "
+                "table-talk command from inside a project first")
+    return None
+
+
+def job_request(cfg_host, roots, name, text, tools, bash):
+    """(spec, None) if this job may start, else (None, why).
+
+    EVERY check lives here, in one pure function, because the previous version
+    put them in the dialog where no test could reach them: keeping the call to
+    the interlock and overwriting its answer on the next line left the whole
+    suite green. A rendering function that only renders cannot do that.
+    """
+    if (blocked := form_blocked(cfg_host, roots)):
+        return None, blocked
+    if name not in roots:
+        return None, f"no recorded directory for {name!r}"
+    if (bad := usable_root(roots[name])):
+        return None, f"{name}: {bad}"
+    for pat in bash:
+        if (problem := pattern_problem(pat)):
+            return None, f"{pat!r}: {problem}"
+    if not str(text).strip():
+        return None, "a job needs something to do"
+    return mint_job(name, str(Path(roots[name]).expanduser().resolve()),
+                    text, tools=tools, bash=bash), None
 
 
 def gate_decision(spec, tool_name, tool_input):
@@ -186,11 +282,18 @@ def gate_decision(spec, tool_name, tool_input):
         cmd = (tool_input or {}).get("command") if isinstance(tool_input, dict) else None
         return bash_allowed(spec.bash, cmd)
     if isinstance(tool_input, dict):
-        for key in _PATH_KEYS:
-            if (val := tool_input.get(key)) is not None:
-                if not isinstance(val, str) or not path_inside(spec.cwd, val):
-                    return False, (f"{val!r} is outside this job's project "
-                                   f"({spec.cwd})")
+        for key, val in tool_input.items():
+            # Two checks, on purpose. A key KNOWN to carry a path must hold a
+            # string we can evaluate - anything else fails closed rather than
+            # sailing past a shape test it does not match. Every other key is
+            # judged by shape, so a tool this code has never heard of is not a
+            # hole by default.
+            if key in _PATH_KEYS and not isinstance(val, str):
+                return False, f"{key}={val!r} is not a path this job can check"
+            if (key in _PATH_KEYS or looks_like_path(val)) \
+                    and not path_inside(spec.cwd, val):
+                return False, (f"{key}={val!r} is outside this job's project "
+                               f"({spec.cwd})")
     return True, ""
 
 
@@ -311,6 +414,88 @@ def selftest():
         "a tab is a token boundary to a shell, so it must be one here too"
     assert not gate_decision(quoted, "Bash", {"command": 'pytest "unbalanced'})[0], \
         "an unbalanced quote is refused rather than guessed at"
+
+    # job_request: EVERY check in one pure function, so a test can call the
+    # thing that actually decides. The previous shape put these in the dialog,
+    # where keeping the call and overwriting its answer left the suite green.
+    import tempfile as _t, os as _os
+    _d = _t.mkdtemp()
+    _os.makedirs(_d + "/proj", exist_ok=True)
+    _good = {"proj": _d + "/proj"}
+
+    def _req(**kw):
+        args = dict(cfg_host="127.0.0.1", roots=_good, name="proj",
+                    text="do it", tools=("Read",), bash=())
+        args.update(kw)
+        return job_request(**args)
+
+    assert _req()[0] is not None, "the ordinary case must actually start"
+    assert _req(cfg_host="0.0.0.0")[0] is None, \
+        "a dashboard on the network must not start a job at ALL: this is the " \
+        "one control the whole design rests on, and it belongs where a test " \
+        "can call it rather than inside a dialog"
+    assert _req(roots={})[0] is None, "no known project, nothing to start"
+    assert _req(name="nope")[0] is None, "an unknown project is refused"
+    assert _req(text="   ")[0] is None, "an empty instruction is refused"
+    assert _req(bash=("find",))[0] is None, \
+        "a pattern that cannot be made safe stops the job BEFORE it exists"
+    for hostile, label in ((("/"), "the filesystem root"),
+                           (str(Path.home()), "the home directory"),
+                           (_d + "/gone", "a directory that is not there")):
+        spec_, why_ = _req(roots={"proj": hostile})
+        assert spec_ is None and why_, \
+            f"{label} must never become a job root: the event log is " \
+            f"append-only text anyone can hand-edit, and one line carrying " \
+            f"root '/' turns path confinement into permission for everything"
+    assert form_blocked("0.0.0.0", _good) and form_blocked("127.0.0.1", {}), \
+        "the form must not open on a networked dashboard, nor when no " \
+        "project's directory is known - a select with nothing safe in it is " \
+        "an invitation to guess"
+    assert form_blocked("127.0.0.1", _good) is None, "otherwise it opens"
+    # Behaviours verified by hand but not pinned until a mutation showed the
+    # pins could not fail. Each of these caught nothing before.
+    _os.makedirs(_d + "/proj/deep", exist_ok=True)
+    _os.makedirs(_d + "/elsewhere", exist_ok=True)
+    _cwd_before = _os.getcwd()
+    # cwd OUTSIDE the job's project - the case that distinguishes anchoring
+    # from resolving against whatever directory this process happens to be in.
+    _os.chdir(_d + "/elsewhere")
+    try:
+        _rel = mint_job("p", _d + "/proj", "t", tools=("Read",), bash=())
+        assert gate_decision(_rel, "Read", {"file_path": "deep/ok"})[0], \
+            "a RELATIVE path must be anchored to the JOB's directory: " \
+            "resolved against the dashboard's own cwd instead, a file plainly " \
+            "inside the project reads as outside it, and the job cannot work"
+        assert not gate_decision(_rel, "Read", {"file_path": "../escape"})[0], \
+            "and anchoring must not become an escape hatch either"
+    finally:
+        _os.chdir(_cwd_before)
+    _shape = mint_job("p", _d + "/proj", "t", tools=("Glob", "Grep"), bash=())
+    assert not gate_decision(_shape, "Glob", {"pattern": "/home/**/.ssh/id_*"})[0], \
+        "a path must be judged by SHAPE, not by a list of key names: Glob's " \
+        "`pattern` is not `file_path`, and Glob is a DEFAULT tool, so a " \
+        "key allowlist let the default job enumerate the filesystem"
+    assert not gate_decision(_shape, "Grep", {"pattern": "KEY", "glob": "/home/**"})[0], \
+        "and every key is checked, not just the first path-shaped one"
+    assert gate_decision(_shape, "Grep", {"pattern": "TODO"})[0], \
+        "while an argument that is not a path at all is left alone"
+    assert pattern_problem("/bin/sh") and pattern_problem("/usr/bin/env"), \
+        "the head is matched on its BASENAME: a denylist matched on the " \
+        "literal string is one absolute path away from being no denylist"
+    assert pattern_problem("uv run") and pattern_problem("npm run") and \
+           pattern_problem("cargo run"), \
+        "a subcommand does not make a runner safe - `uv run python -c ...` " \
+        "is arbitrary execution, and that reads as an ordinary build command"
+    assert pattern_problem("git status") is None and pattern_problem("npm ci") is None, \
+        "while an ordinary subcommand still works"
+    assert usable_root(_d + "/proj") is None and usable_root("/") and \
+        usable_root(str(Path.home())) and usable_root(_d + "/nope") and \
+        usable_root(None) and usable_root(""), \
+        "usable_root judges the recorded directory on its own terms"
+    got, _ = _req()
+    assert got.cwd == str(Path(_d + "/proj").resolve()), \
+        "the spec carries the RESOLVED directory, so what the gate confines " \
+        "to and what the user was shown are the same path"
 
     out = hook_output(*gate_decision(spec, "Write", {}))
     h = out["hookSpecificOutput"]

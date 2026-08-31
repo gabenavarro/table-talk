@@ -1,7 +1,7 @@
 #!/usr/bin/env -S uv run --script
 # /// script
 # requires-python = ">=3.12"
-# dependencies = ["nicegui>=3.16,<4"]
+# dependencies = ["nicegui>=3.16,<4", "claude-agent-sdk>=0.2,<0.3"]
 # ///
 """table-talk dashboard: live NiceGUI view of the table-talk event logs."""
 import argparse
@@ -650,22 +650,23 @@ def coerce(kind, bounds, value, like):
     return float(num) if isinstance(like, float) else int(num)
 
 
-def panel_state(cfg, roots):
-    """What the job dialog may show: ("refused"|"empty"|"form", payload).
+async def start_job(cfg_host, roots, name, text, tools, bash, feed,
+                    runner=None):
+    """Ask tt_jobs whether this job may run, then run it. Returns the spec or None.
 
-    The decision is a pure function so it can be tested by BEHAVIOUR rather
-    than by grepping the panel for a call. The first version of this pinned
-    only the call text, and adding `allowed = True` after it left the suite
-    green - on the one control the whole design rests on.
+    Module level, and the runner is injectable, PRECISELY so a test can call
+    the code that enforces the decision. Every earlier shape kept this logic
+    inside the dialog, where the only possible pin was a grep - and a mutation
+    that kept the call to job_request and overwrote its answer left the whole
+    suite green, three reviews running.
     """
-    ok, why = tt_jobs.launch_allowed(cfg["server"]["host"])
-    if not ok:
-        return "refused", why
-    if not roots:
-        return "empty", ("no project has recorded its directory yet - run any "
-                         "table-talk command from inside a project first, and "
-                         "it will appear here")
-    return "form", sorted(roots)
+    spec, refusal = tt_jobs.job_request(cfg_host, roots, name, text, tools, bash)
+    if spec is None:
+        feed("deny", refusal)
+        return None
+    feed("tool", f"session {tt_jobs.job_sid(spec)} in {spec.project} ({spec.cwd})")
+    await (runner or run_job)(spec, feed)
+    return spec
 
 
 async def run_job(spec, on_event, client_factory=None):
@@ -673,10 +674,15 @@ async def run_job(spec, on_event, client_factory=None):
 
     ClaudeAgentOptions and HookMatcher are duck-typed locally and the SDK
     import is confined to the real branch, so with a client_factory injected
-    this never touches claude_agent_sdk at all: nothing in ./test.sh needs the
-    SDK installed, needs credentials, or costs money. The SDK is deliberately
-    NOT in this file's PEP 723 dependencies for the same reason - declaring it
-    made the suite unresolvable offline even though the import is lazy.
+    this never touches claude_agent_sdk at all: nothing in ./test.sh needs
+    credentials or costs money.
+
+    The SDK IS declared in this file's PEP 723 dependencies. It was dropped
+    once, to keep the suite resolvable offline - but `uv run --script` builds
+    an isolated environment from that header, so the real branch then had no
+    SDK to import and every job on a clean install failed with advice that
+    cannot be followed in a script env. It only appeared to work because uv
+    reused a stale cached environment from when the dependency was declared.
     """
     import tt_jobs as J
 
@@ -1838,41 +1844,62 @@ def selftest():
     assert ".cfg-row" in css and ".cfg{" in css, \
         "the form needs its own styling in the sheet, or it renders as " \
         "unthemed browser defaults inside a themed app"
-    # panel_state: the interlock, testable by behaviour. A grep for the call
-    # cannot fail when someone neuters the answer.
-    _cfg_net = {"server": {"host": "0.0.0.0"}}
-    _cfg_loc = {"server": {"host": "127.0.0.1"}}
-    _roots = {"proj": "/home/u/proj"}
-    assert panel_state(_cfg_net, _roots)[0] == "refused", \
-        "a dashboard reachable from the network must NOT offer to start a " \
-        "job: it has no password and a job can run commands, which together " \
-        "is a remote shell for anyone on shared wifi"
-    assert "no password" in panel_state(_cfg_net, _roots)[1], \
-        "and it must say WHY, or the button just looks broken"
-    assert panel_state(_cfg_loc, _roots) == ("form", ["proj"]), \
-        "on localhost, with a project whose directory is known, the form opens"
-    assert panel_state(_cfg_loc, {})[0] == "empty", \
-        "a project whose directory was never recorded must NOT be offered: " \
-        "the alternative is guessing, and a wrong guess runs an agent with " \
-        "Edit and Bash in a directory nobody chose"
-    assert panel_state(_cfg_net, {})[0] == "refused", \
-        "the interlock outranks emptiness - it is checked first, always"
+    import asyncio as _aio
+    import os as _os
+    import tempfile as _t
+    import tt_jobs as _J
 
-    assert "state, payload = panel_state(cfg, roots)" in code and \
-           'if state != "form":' in code, \
-        "the dialog must BRANCH on panel_state's answer: the form and the " \
-        "refusal are different code paths, so there is no start control to " \
-        "re-enable on the refused one"
-    assert "tt_jobs.pattern_problem(x)" in code, \
-        "a pattern that cannot be made safe must be refused when the job is " \
-        "STARTED, not argued with per command - `find . -exec` carries no " \
-        "metacharacter for a command-time check to catch"
-    assert "cwd = roots.get(proj.value)" in code and "link_roots" not in \
-           code.split("def job_panel")[1].split("def cycle_theme")[0], \
-        "the job's directory must come from the recorded project roots and " \
-        "NEVER from link_roots, which is a link-confinement list - using it " \
-        "put four of five projects in the dashboard's own directory and the " \
-        "table-talk project inside the event log store"
+    # The dialog RENDERS; tt_jobs decides. Those decisions are pinned by
+    # behaviour in tt_jobs' own selftest - these pins only hold the wiring.
+    _panel = code.split("def job_panel")[1].split("def cycle_theme")[0]
+    assert "tt_jobs.form_blocked(cfg[\"server\"][\"host\"], roots)" in _panel, \
+        "whether the form opens at all must come from tt_jobs, not from a " \
+        "condition written here where no test can reach it"
+    assert "await start_job(cfg[\"server\"][\"host\"], roots," in _panel, \
+        "starting a job must go through start_job, which a test can CALL - " \
+        "every shape that kept this logic in the dialog could only be pinned " \
+        "by a grep, and a grep cannot fail"
+
+    # start_job, called for real with a fake runner: this is the enforcement
+    # that three reviews found untestable.
+    _sj_dir = _t.mkdtemp()
+    _os.makedirs(_sj_dir + "/proj", exist_ok=True)
+    _sj_roots = {"proj": _sj_dir + "/proj"}
+    _ran = []
+
+    async def _fake_runner(spec, feed):
+        _ran.append(spec)
+
+    def _sj(host="127.0.0.1", roots=None, name="proj", text="do it",
+            tools=("Read",), bash=()):
+        _ran.clear()
+        said = []
+        got = _aio.run(start_job(host, _sj_roots if roots is None else roots,
+                                 name, text, tools, bash,
+                                 lambda k, t: said.append((k, t)), _fake_runner))
+        return got, said
+
+    _spec_ok, _said = _sj()
+    assert _spec_ok is not None and len(_ran) == 1, "the ordinary case runs"
+    for _label, _kw in (("a networked dashboard", {"host": "0.0.0.0"}),
+                        ("no known projects", {"roots": {}}),
+                        ("an unknown project", {"name": "nope"}),
+                        ("an empty instruction", {"text": "  "}),
+                        ("an unsafe pattern", {"tools": ("Bash",), "bash": ("find",)}),
+                        ("a hostile root", {"roots": {"proj": "/"}})):
+        _got, _said = _sj(**_kw)
+        assert _got is None and not _ran, \
+            f"{_label} must stop the job BEFORE the runner is reached"
+        assert _said and _said[0][0] == "deny" and _said[0][1], \
+            f"{_label} must say why in the panel, or it reads as a dead button"
+    assert "link_roots" not in _panel and "cwd = " not in _panel, \
+        "the job's directory comes from job_request's resolved spec, never " \
+        "from link_roots - a link-confinement list that put four of five " \
+        "projects in the dashboard's own directory"
+    assert 'f"{n} - {r}"' in _panel, \
+        "the select must show the DIRECTORY beside the name: projects are " \
+        "keyed on a directory basename, so two repos both called `api` are " \
+        "one entry and the user would pick a name and get the other one"
     assert ".job-deny" in css and ".job{" in css, \
         "a refusal must LOOK like one, or a job the dashboard stopped reads " \
         "as the model failing"
@@ -2415,16 +2442,24 @@ def main(port=None):
         dlg.open()
 
     def job_panel(cfg):
-        """Start a job in a project whose directory the wall has recorded."""
+        """Render what tt_jobs.job_request decides. It renders; it never decides.
+
+        Every check that matters lives in job_request, which a test can call.
+        The previous shape put them here, and a mutation that kept the call and
+        overwrote its answer left the whole suite green.
+        """
         roots = M.project_roots({f.stem: M.fold_cached(f)
                                  for f in DATA_DIR.glob("*.jsonl")})
-        state, payload = panel_state(cfg, roots)
+        # Labelled by name AND directory: projects are keyed on a directory
+        # BASENAME, so two repos both called `api` are one entry, and the user
+        # would otherwise pick a name and get the other one.
+        labels = {f"{n} - {r}": n for n, r in sorted(roots.items())}
         with ui.dialog() as dlg, ui.element("div").classes("job"):
             ui.label("start a job").classes("cfg-h")
-            if state != "form":
-                # No start control EXISTS on this path, rather than one that
-                # is disabled: there is nothing here to re-enable.
-                ui.label(payload).classes("job-deny")
+            if (blocked := tt_jobs.form_blocked(cfg["server"]["host"], roots)):
+                # No start control EXISTS on this path, rather than a disabled
+                # one: there is nothing here to re-enable.
+                ui.label(blocked).classes("job-deny")
                 with ui.element("div").classes("cfg-act"):
                     b = ui.element("button").classes("lk")
                     with b:
@@ -2432,7 +2467,7 @@ def main(port=None):
                     b.on("click", lambda _: dlg.close())
                 dlg.open()
                 return
-            proj = ui.select(payload, value=payload[0])
+            proj = ui.select(sorted(labels), value=sorted(labels)[0])
             text = ui.textarea("what should it do?")
             tools = ui.select(["Read", "Grep", "Glob", "Edit", "Write", "Bash"],
                               multiple=True, value=["Read", "Grep", "Glob"])
@@ -2450,30 +2485,15 @@ def main(port=None):
 
             def feed(kind, body):
                 with out:
-                    ui.label(body if kind != "done" else "— finished —") \
+                    ui.label(body if kind != "done" else "- finished -") \
                         .classes(f"job-{kind}")
 
             async def start(_):
                 pats = tuple(x.strip() for x in (bash.value or "").split(",")
                              if x.strip())
-                bad = [(x, tt_jobs.pattern_problem(x)) for x in pats
-                       if tt_jobs.pattern_problem(x)]
-                if bad:
-                    # Refused BEFORE the job exists: a pattern like `find`
-                    # cannot be made safe by inspecting arguments later.
-                    for x, why in bad:
-                        feed("deny", f"{x}: {why}")
-                    return
-                cwd = roots.get(proj.value)
-                if not cwd:
-                    feed("deny", f"no recorded directory for {proj.value}")
-                    return
-                spec = tt_jobs.mint_job(proj.value, cwd, text.value or "",
-                                        tools=tuple(tools.value or ()),
-                                        bash=pats)
-                feed("tool", f"session {tt_jobs.job_sid(spec)} "
-                             f"in {spec.project} ({cwd})")
-                await run_job(spec, feed)
+                await start_job(cfg["server"]["host"], roots,
+                                labels.get(proj.value, ""), text.value or "",
+                                tuple(tools.value or ()), pats, feed)
 
             go.on("click", start)
         dlg.open()
