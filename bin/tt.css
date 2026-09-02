@@ -468,12 +468,15 @@ body{background:var(--bg);color:var(--ink);margin:0}
 .cfg-msg{margin-top:10px;color:var(--ink-2);font-size:12px;min-height:1em}
 .cfg-act{display:flex;gap:14px;margin-top:8px;justify-content:flex-end}
 
-/* The job panel. Tokens only, so it follows whatever theme is loaded. */
-.job{background:var(--surface);color:var(--ink);padding:14px 16px;
-     border:1px solid var(--rule);min-width:420px;max-width:92vw}
-.job-out{max-height:40vh;overflow:auto;margin:10px 0;font-size:12px}
-.job-text{color:var(--ink);white-space:pre-wrap}
-.job-tool{color:var(--ink-2)}
-.job-deny{color:var(--act);font-weight:600}
-.job-error{color:var(--act)}
-.job-done{color:var(--ink-3)}
+/* The answer box under each row. Tokens only, and it must not look like a
+   form: this is a terminal wall, so the input is a flat line under the row. */
+.reply{align-items:flex-start}
+.reply-box{display:flex;gap:8px;align-items:flex-start;flex:1;min-width:0}
+.reply-in{flex:1;min-width:0;background:var(--surface-2);color:var(--ink);
+          border:1px solid var(--rule);border-radius:2px;font:inherit;
+          padding:2px 6px;resize:vertical;min-height:1.6em}
+.reply-in:focus{outline:none;border-color:var(--caret)}
+.reply-in::placeholder{color:var(--ink-3);opacity:.7}
+.reply-copy{color:var(--ink-2);white-space:nowrap}
+.reply-copy:hover{color:var(--caret)}
+.reply-copy.copied{color:var(--act)}
