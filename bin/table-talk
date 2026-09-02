@@ -90,9 +90,10 @@ def all_ids():
 
 def new_id():
     used = all_ids()
-    while (i := secrets.token_hex(2)) in used:
-        pass
-    return i
+    for _ in range(1 << 16):
+        if (i := secrets.token_hex(2)) not in used:
+            return i
+    sys.exit("error: id space exhausted (all 65536 4-hex ids are in use)")
 
 
 @contextmanager
@@ -759,6 +760,15 @@ def selftest():
         secrets.token_hex = lambda n=2: next(draws)
         try:
             assert new_id() == free, "new_id must skip an id used in any file"
+        finally:
+            secrets.token_hex = orig
+        # an id space with no free value left must fail loudly, not spin forever
+        secrets.token_hex = lambda n=2: "d00d"
+        try:
+            new_id()
+            raise AssertionError("new_id must raise once every id is exhausted, not hang")
+        except SystemExit:
+            pass
         finally:
             secrets.token_hex = orig
         assert safe_project("a/b") == "a_b" and safe_project("x") == "x", "project separators sanitized"
