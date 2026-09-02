@@ -262,7 +262,7 @@ def usable_root(root):
     if any(part.startswith(".") for part in r.parts):
         # ~/.ssh and ~/.gnupg cleared every other test here.
         return f"{r} is a dot-directory, not a project"
-    if not (r / ".git").is_dir():
+    if not (r / ".git").exists():
         return (f"{r} has no .git, so it is not a project this can run in - "
                 f"a job may commit, and it should be a repository doing it")
     return None
@@ -551,6 +551,13 @@ def selftest():
     assert usable_root(_dot), \
         "and a dot-directory is refused even WITH a .git: ~/.ssh and ~/.gnupg " \
         "cleared every other test this function makes"
+    _wt = _t2.mkdtemp() + "/worktree"
+    _os2.makedirs(_wt, exist_ok=True)
+    open(_wt + "/.git", "w").write("gitdir: /elsewhere/.git/worktrees/wt\n")
+    assert usable_root(_wt) is None, \
+        "a git worktree or submodule is a real project even though its .git " \
+        "is a FILE (a gitdir pointer), not a directory - that is how " \
+        "`git worktree add` writes it, and it must not be refused for that"
 
     _bd = _t2.mkdtemp()
     _os2.makedirs(_bd + "/repo/.git", exist_ok=True)
