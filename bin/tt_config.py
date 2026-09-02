@@ -89,6 +89,9 @@ def _merge(default, override, path=""):
     out of range, or an unknown key, is dropped with a warning rather than
     propagated."""
     out = {}
+    if isinstance(override, dict):
+        for key in override.keys() - default.keys():
+            print(f"warning: config {path}{key}: unknown key, ignored", file=sys.stderr)
     for key, dv in default.items():
         ov = override.get(key) if isinstance(override, dict) else None
         where = f"{path}{key}"
@@ -267,6 +270,8 @@ def themes():
 
 
 def selftest():
+    import contextlib
+    import io
     import tempfile
     # The defaults are a SECOND copy of the stylesheet's values; if they drift, a
     # user with no config file silently gets the old colour back.
@@ -365,6 +370,18 @@ def selftest():
         extra = Path(td) / "extra.toml"
         extra.write_text('[nonsense]\nkey = 1\n')
         assert "nonsense" not in load(extra), "unknown sections are ignored, not merged"
+
+        typo = Path(td) / "typo.toml"
+        typo.write_text('[server]\npol_seconds = 5\n')
+        buf = io.StringIO()
+        with contextlib.redirect_stderr(buf):
+            got = load(typo)
+        assert got["server"]["poll_seconds"] == DEFAULTS["server"]["poll_seconds"], \
+            "a typo'd key must not silently take effect - it is not a known key"
+        assert "pol_seconds" in buf.getvalue() and "unknown key" in buf.getvalue(), \
+            "and it must warn: every OTHER way to get a value wrong in this " \
+            "file warns, and a typo that is dropped with no signal at all is " \
+            "the one mistake the user never learns they made"
 
         # Naming a bundled theme replaces the base palette; the file's own
         # tokens still win, so one colour can be changed without restating
