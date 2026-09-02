@@ -1085,7 +1085,7 @@ def bar_for(open_n, done_n):
     return "█" * open_n, "░" * done_n
 
 
-def _prompt(cls, title, count, toggles=None, opened=None, key="", force=False, bar=None):
+def _prompt(cls, title, count, toggles, opened, key, force=False, bar=None):
     """A section header as a shell prompt line: '❯ actions --open (3)'.
 
     When `toggles` is given, clicking the line shows or hides that container —
@@ -1104,7 +1104,7 @@ def _prompt(cls, title, count, toggles=None, opened=None, key="", force=False, b
     with ui.element("button").classes(f"pr {cls}") as line:
         ui.label("❯").classes("g")
         ui.label(title)
-        tail = "" if toggles is None else (" ▾" if shown else " ▸")
+        tail = " ▾" if shown else " ▸"
         caret = ui.label(f"({count}){tail}").classes("n")
         # Shown only while the section is shut: open, the rows themselves say it.
         bar_el = ui.element("div").classes("bar-box")
@@ -1112,8 +1112,6 @@ def _prompt(cls, title, count, toggles=None, opened=None, key="", force=False, b
             with bar_el:
                 ui.label(bar[0]).classes("bar")
                 ui.label(bar[1]).classes("bar e")
-    if toggles is None:
-        return
     toggles.set_visibility(shown)
     bar_el.set_visibility(bool(bar) and not shown)
 
