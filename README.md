@@ -306,3 +306,6 @@ a red build cannot reach `main`. The second requires one approving review,
 and only a repository admin can bypass it, and only through a pull request.
 
 So: branch from `main`, keep `./test.sh` green, open a PR, and get a review.
+
+`docs/superpowers/` is project history, not user docs: the design spec and
+implementation plan each feature PR shipped with.

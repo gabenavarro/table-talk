@@ -29,7 +29,7 @@
 - [ ] **Step 1: Issue + branch**
 
 ```bash
-cd /var/home/dna/GitHub/table-talk && git checkout main && git pull
+cd <repo> && git checkout main && git pull
 gh issue create --title "A resolved item loses its sketch" --body "_done_row renders only the id and headline, so the ASCII sketch recorded on an action or job vanishes when it is marked done — exactly when it becomes reference material worth keeping. Render the sketch on done rows too."
 git checkout -b fix/done-keeps-sketch
 ```

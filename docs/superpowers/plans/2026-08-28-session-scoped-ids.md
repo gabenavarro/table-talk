@@ -34,7 +34,7 @@
 - [ ] **Step 1: Issue + branch**
 
 ```bash
-cd /var/home/dna/GitHub/table-talk && git checkout main && git pull
+cd <repo> && git checkout main && git pull
 gh issue create --title "Acting on another session's item leaves it owned by the other session" \
   --body "$(cat <<'EOF'
 `update()` (the `progress` and `done` commands) finds an item by id anywhere in the data dir and appends to it without checking who owns it. So session B advances session A's job and the record still says it is A's, while B's reply discusses it as B's work. Several agent sessions share one project's log every day, so this is the normal case, not an edge one.
