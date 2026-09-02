@@ -686,11 +686,9 @@ def needs_restart(changed):
     main() calls tt_config.load() exactly once, at startup; poll()/tick() and
     every cfg[...] read in the file close over that one snapshot forever, so
     a save through the settings form changes the file on disk and nothing
-    else until the process is restarted. Filtered against form_fields() so
-    this never names a key the form could not actually have saved.
+    else until the process is restarted.
     """
-    fields = {dotted for dotted, _, _ in tt_config.form_fields()}
-    return sorted(k for k in changed if k in fields)
+    return sorted(changed)
 
 
 def coerce(kind, bounds, value, like):
@@ -1927,8 +1925,6 @@ def selftest():
         "not just host/port - needs a fresh process before it takes effect"
     assert needs_restart({"ui.view": "flat"}) == ["ui.view"], \
         "including a key with no restart button of its own"
-    assert needs_restart({"not.a.field": "x"}) == [], \
-        "but never a key the settings form could not have saved"
     assert coerce("number", (1, 65535), "8731.0", 8731) == 8731 and \
            isinstance(coerce("number", (1, 65535), "8731.0", 8731), int), \
         "a number widget hands back a float for everything, and the loader " \
