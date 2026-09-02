@@ -88,8 +88,7 @@ document.addEventListener('click', e => {
   const id = b.dataset.id || '', s = b.dataset.session || '';
   if (!/^[0-9a-f]{4,}$/.test(id)) return;              // never copy arbitrary text
   const cmd = /^[0-9a-f]{2,}$/.test(s) ? `SESSION: ${s} - ID: ${id}` : id;
-  if (navigator.clipboard) navigator.clipboard.writeText(cmd).catch(() => {});
-  b.classList.add('copied');
+  navigator.clipboard?.writeText(cmd).then(() => b.classList.add('copied')).catch(() => {});
   setTimeout(() => b.classList.remove('copied'), 900);
 });
 </script>"""
@@ -125,8 +124,7 @@ REPLY_JS = """<script>
     const text = (drafts.get(id) || '').trim();
     if (!text) return;
     const line = id + ': ' + text;
-    if (navigator.clipboard) navigator.clipboard.writeText(line).catch(() => {});
-    b.classList.add('copied');
+    navigator.clipboard?.writeText(line).then(() => b.classList.add('copied')).catch(() => {});
     setTimeout(() => b.classList.remove('copied'), 900);
   });
 
@@ -1417,6 +1415,11 @@ def selftest():
         "one open item among a hundred resolved still shows: rounding it away " \
         "makes the bar say nothing needs you while something does"
     assert "data-id" in COPY_JS and "clipboard" in COPY_JS
+    assert "then(() =>" in COPY_JS, \
+        "'copied' must confirm a WRITE THAT SUCCEEDED, never fire unconditionally " \
+        "right after a fire-and-forget writeText - otherwise a non-secure " \
+        "context (navigator.clipboard undefined) or a denied permission still " \
+        "flashes 'copied' with nothing on the clipboard"
     assert "[0-9a-f]{4,}" in COPY_JS, \
         "only a minted id (secrets.token_hex) is ever put on the clipboard, so " \
         "a stray element carrying a data-id cannot copy arbitrary text"
@@ -1998,6 +2001,11 @@ def selftest():
     assert REPLY_JS.index("[0-9a-f]{4,}") < REPLY_JS.index("writeText"), \
         "the id must be checked BEFORE anything reaches the clipboard, or a " \
         "stray data-reply-copy attribute copies arbitrary text"
+    assert "then(() =>" in REPLY_JS, \
+        "'copied' must confirm a WRITE THAT SUCCEEDED, never fire unconditionally " \
+        "right after a fire-and-forget writeText - otherwise a non-secure " \
+        "context or a denied permission still flashes 'copied' with the " \
+        "user's answer nowhere on the clipboard"
     assert "id + ': ' + text" in REPLY_JS, \
         "the clipboard line is `<id>: <answer>`, which is the format the " \
         "protocol asks the user to reply in - copying the bare answer would " \
