@@ -657,6 +657,10 @@ def restart_offer(running_port, config_port, explicit):
     return True, f"config asks for port {config_port}; restart to move there?"
 
 
+# The only two keys where a restart actually moves something (the listening
+# socket) - used just to decide whether the restart BUTTON is worth showing.
+# Every other saved key also needs a restart to take effect (see
+# needs_restart below); it just has no button that would help with it.
 RESTART_KEYS = ("server.host", "server.port")
 
 
@@ -679,13 +683,16 @@ def form_updates(current, submitted):
 
 
 def needs_restart(changed):
-    """Which saved settings only take effect on a fresh process.
+    """Every saved key, sorted - NONE of it takes effect without a restart.
 
-    The rest are read on every poll, so they apply as soon as they are saved.
-    Host and port are handed to ui.run() once, at startup, and nothing can move
-    a listening socket afterwards.
+    main() calls tt_config.load() exactly once, at startup; poll()/tick() and
+    every cfg[...] read in the file close over that one snapshot forever, so
+    a save through the settings form changes the file on disk and nothing
+    else until the process is restarted. Filtered against form_fields() so
+    this never names a key the form could not actually have saved.
     """
-    return sorted(k for k in changed if k in RESTART_KEYS)
+    fields = {dotted for dotted, _, _ in tt_config.form_fields()}
+    return sorted(k for k in changed if k in fields)
 
 
 def coerce(kind, bounds, value, like):
@@ -1911,11 +1918,14 @@ def selftest():
     assert form_updates(_cur, {"server.host": "0.0.0.0"}) == {"server.host": "0.0.0.0"}
     assert form_updates(_cur, {"server.port": None}) == {}, \
         "a field that failed to coerce is left ALONE, never written as null"
-    assert needs_restart({"server.host": "0.0.0.0", "ui.view": "flat"}) == ["server.host"], \
-        "host and port reach ui.run() once at startup and nothing can move a " \
-        "listening socket after; the rest are re-read on every poll"
-    assert needs_restart({"ui.view": "flat"}) == [], \
-        "and a setting that applies immediately must not demand a restart"
+    assert needs_restart({"server.host": "0.0.0.0", "ui.view": "flat"}) == \
+        ["server.host", "ui.view"], \
+        "main() loads config exactly once at startup, so EVERY saved key - " \
+        "not just host/port - needs a fresh process before it takes effect"
+    assert needs_restart({"ui.view": "flat"}) == ["ui.view"], \
+        "including a key with no restart button of its own"
+    assert needs_restart({"not.a.field": "x"}) == [], \
+        "but never a key the settings form could not have saved"
     assert coerce("number", (1, 65535), "8731.0", 8731) == 8731 and \
            isinstance(coerce("number", (1, 65535), "8731.0", 8731), int), \
         "a number widget hands back a float for everything, and the loader " \
@@ -2570,11 +2580,10 @@ def main(port=None):
                 msg.set_text(why)
                 return
             later = needs_restart(changed)
-            msg.set_text(f"saved {', '.join(sorted(changed))}"
-                         + (f" - {', '.join(later)} needs a restart"
-                            if later else ""))
-            if later:
-                port_msg.set_text(f"{', '.join(later)} changed; restart to apply")
+            msg.set_text(f"saved {', '.join(later)} - applies on the next start")
+            moved = [k for k in later if k in RESTART_KEYS]
+            if moved:
+                port_msg.set_text(f"{', '.join(moved)} changed; restart to apply")
                 port_go.set_visibility(True)
 
         save.on("click", do_save)
