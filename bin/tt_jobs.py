@@ -72,7 +72,8 @@ _MULTIPLEXERS = frozenset((
     "nice", "stdbuf", "setsid", "flock", "script", "chroot", "unshare",
     "python", "python3", "perl", "ruby", "node", "ssh", "docker", "podman",
     "awk", "gawk", "sed", "tar", "rsync", "chmod", "chown", "rm", "dd",
-    "install", "ln", "mv", "cp", "curl", "wget", "systemd-run", "at", "crontab"))
+    "install", "ln", "mv", "cp", "curl", "wget", "systemd-run", "at", "crontab",
+    "npx", "time"))
 
 # `uv run python -c ...` is arbitrary execution, and so is every sibling.
 _RUNNER_SUBCOMMANDS = frozenset(("run", "exec", "x", "dlx", "tool"))
@@ -444,10 +445,13 @@ def selftest():
 
     # Patterns that cannot be made safe by inspecting arguments.
     assert pattern_problem("find") and pattern_problem("xargs") and \
-           pattern_problem("sudo") and pattern_problem("sh"), \
+           pattern_problem("sudo") and pattern_problem("sh") and \
+           pattern_problem("npx") and pattern_problem("time"), \
         "a head that runs whatever it is handed must be refused as a PATTERN: " \
         "`find . -exec rm -rf / {} +` needs no metacharacter at all, so no " \
-        "command-time check can catch it"
+        "command-time check can catch it - and that includes `npx`, which " \
+        "downloads and runs an arbitrary package, and `time`, a multiplexer " \
+        "just like nice or nohup"
     assert pattern_problem("git") and not pattern_problem("git commit"), \
         "bare `git` permits `git -c alias.z='!id' z`, which runs anything; " \
         "with a subcommand it does not"
