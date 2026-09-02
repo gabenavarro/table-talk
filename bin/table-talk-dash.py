@@ -428,7 +428,7 @@ def _dim(ev, query):
     The filter DIMS, it never hides: a filter must never remove an open action
     from the wall. Non-matching rows stay in place at reduced opacity, so the
     layout does not reflow and nothing disappears while you look for something
-    else. tt_model.matches answers a whole session; this answers one row."""
+    else."""
     q = (query or "").strip().lower()
     return " tt-dim" if q and q not in M.row_text(ev).lower() else ""
 
