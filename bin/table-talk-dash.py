@@ -2084,7 +2084,11 @@ def selftest():
     # A panel that throws must not take the job or the page down with it.
     def _boom(kind, body):
         raise RuntimeError("panel is broken")
-    _aio.run(run_job(_spec, _boom, _FakeClient))
+    logging.disable(logging.CRITICAL)
+    try:
+        _aio.run(run_job(_spec, _boom, _FakeClient))
+    finally:
+        logging.disable(logging.NOTSET)
 
     # run_job's own failure and refusal paths, unpinned until a mutation showed
     # it: deleting the gate's panel line, or swallowing the session's exception,
