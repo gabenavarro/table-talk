@@ -57,10 +57,12 @@ def launch_allowed(host):
 
 
 # Metacharacters that turn one permitted command into an arbitrary one.
-# Split by where they still bite: a shell expands $(...) and backticks INSIDE
-# double quotes, so those are unsafe wherever they appear; the rest are inert
-# once quoted, which is what lets `git commit -m "fix: a & b"` through.
-_ALWAYS = ("`", "$(", "${")
+# Split by where they still bite: a shell expands $(...), ${...} and a bare
+# $VAR, plus backticks, INSIDE double quotes, so those are unsafe wherever
+# they appear ("$" alone covers all three $ forms, being a prefix of each);
+# the rest are inert once quoted, which is what lets
+# `git commit -m "fix: a & b"` through.
+_ALWAYS = ("`", "$")
 _OUTSIDE = (";", "&&", "||", "|", ">", "<", "&", "\n", "\r")
 
 # Heads that run whatever they are handed. `find . -exec rm -rf / {} +` needs
@@ -402,6 +404,10 @@ def selftest():
                  "pytest `whoami`", "pytest $(id)", "pytest\nrm -rf /"):
         assert not gate_decision(spec, "Bash", {"command": evil})[0], \
             f"refused shell construction leaked through: {evil!r}"
+    assert not gate_decision(spec, "Bash", {"command": "pytest $HOME/x"})[0], \
+        "a BARE $VAR must be refused too, not only $( - a shell expands " \
+        "$HOME with no parentheses at all, and a job allowed only `cat` " \
+        "could otherwise read $HOME/.ssh/id_ed25519"
     assert not gate_decision(spec, "Bash", {"command": "rm -rf /"})[0], \
         "an unmatched command is denied"
     assert not gate_decision(spec, "Bash", {})[0], "a Bash call with no command is denied"
