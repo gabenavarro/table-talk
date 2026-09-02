@@ -186,6 +186,8 @@ def add_term(path, term, intuitive, technical):
     into an old file instead would make that file's summarize.latest jump to
     now, and this session's fold would show nothing it just recorded (#140).
     merge_projects keeps the newest-ts copy when an id spans files."""
+    if not term.strip():
+        sys.exit("error: term must not be empty")
     with mint_lock():
         existing = find_project_dup(path, "term", "term", term)
         i = existing if existing is not None else new_id()
@@ -205,6 +207,8 @@ def add_diagram(path, title, mermaid):
     (#140). merge_projects keeps the newest-ts copy when an id spans files,
     so the older file's superseded source is what the wall stops showing,
     while that file's own history still honestly says it was recorded there."""
+    if not title.strip():
+        sys.exit("error: title must not be empty")
     with mint_lock():
         existing = find_project_dup(path, "diagram", "title", title)
         i = existing if existing is not None else new_id()
@@ -631,6 +635,11 @@ def selftest():
         i2 = add_term(f, "fva", "v2", "t2")
         assert i1 == i2, "term dedupe is case-insensitive"
         assert fold(f)[i1]["intuitive"] == "v2", "term re-add updates definitions"
+        try:
+            add_term(f, "", "i", "t")
+            raise AssertionError("blank term must be rejected, not merged into the previous titleless one (#202)")
+        except SystemExit:
+            pass
         # argv hands us lone surrogates for bytes it could not decode; written
         # through, they stop the dashboard rendering at all (orjson refuses the
         # payload, and NiceGUI requires orjson).
@@ -761,6 +770,11 @@ def selftest():
         assert d1 == d2, "diagram dedupe is case-insensitive on the title"
         assert fold(f)[d1]["mermaid"].endswith("a --> c"), \
             "re-recording a title REPLACES the source: a diagram is iterated on"
+        try:
+            add_diagram(f, "  ", "flowchart TD\n  a --> b")
+            raise AssertionError("blank title must be rejected, not merged into the previous titleless one (#202)")
+        except SystemExit:
+            pass
         try:
             update(d1, {"status": "done"})
             raise AssertionError("done on a diagram must be rejected")
