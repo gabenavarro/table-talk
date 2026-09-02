@@ -406,8 +406,8 @@ def selftest():
             f"refused shell construction leaked through: {evil!r}"
     assert not gate_decision(spec, "Bash", {"command": "pytest $HOME/x"})[0], \
         "a BARE $VAR must be refused too, not only $( - a shell expands " \
-        "$HOME with no parentheses at all, and a job allowed only `cat` " \
-        "could otherwise read $HOME/.ssh/id_ed25519"
+        "$HOME with no parentheses at all, and a job allowed only `pytest` " \
+        "could otherwise hand it $HOME/.ssh/id_ed25519"
     assert not gate_decision(spec, "Bash", {"command": "rm -rf /"})[0], \
         "an unmatched command is denied"
     assert not gate_decision(spec, "Bash", {})[0], "a Bash call with no command is denied"
