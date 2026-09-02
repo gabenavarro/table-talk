@@ -388,17 +388,6 @@ def row_text(ev):
     return " ".join(str(ev.get(f, "")) for f in _TEXT_FIELDS)
 
 
-def matches(state, name, query):
-    """A session survives the filter if the query hits its name or any of its rows.
-    Replaces Quasar's built-in table filter, which goes away with the tables."""
-    q = (query or "").strip().lower()
-    if not q:
-        return True
-    if q in name.lower():
-        return True
-    return any(q in row_text(ev).lower() for ev in state.values())
-
-
 def parts(text, q):
     """Split text into [(chunk, is_match)], case-insensitive, preserving the
     original casing and spacing. Matches are non-overlapping, left to right."""
@@ -770,17 +759,6 @@ def selftest():
                    "why": "GPU cost", "rec": "let it finish", "ts": 1},
           "c3d4": {"id": "c3d4", "type": "term", "term": "FBA",
                    "intuitive": "flux balance", "technical": "linear program", "ts": 2}}
-    assert matches(st, "2026-08-26-phephree", "") is True, "an empty query matches everything"
-    assert matches(st, "2026-08-26-phephree", None) is True
-    assert matches(st, "2026-08-26-phephree", "   ") is True
-    assert matches(st, "2026-08-26-phephree", "phephree") is True, "the session name matches"
-    assert matches(st, "2026-08-26-phephree", "PHEPHREE") is True, "matching is case-insensitive"
-    assert matches(st, "2026-08-26-phephree", "retrain") is True, "background matches"
-    assert matches(st, "2026-08-26-phephree", "gpu cost") is True, "why matches"
-    assert matches(st, "2026-08-26-phephree", "flux") is True, "a glossary term matches"
-    assert matches(st, "2026-08-26-phephree", "a1b2") is True, "an id matches"
-    assert matches(st, "2026-08-26-phephree", "kubernetes") is False
-    assert matches({}, "2026-08-26-empty", "anything") is False
     assert "retrain the model" in row_text(st["a1b2"])
     assert row_text({"id": 77, "type": "task"}).startswith("77"), "a non-string id is safe"
 
