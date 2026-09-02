@@ -134,7 +134,7 @@ def find_project_dup(path, type_, field, key):
     for p in sorted(DATA_DIR.glob(pattern), reverse=True):
         state = fold(p)
         i = next((eid for eid, e in state.items()
-                  if e.get("type") == type_ and e.get(field, "").lower() == key.lower()),
+                  if e.get("type") == type_ and str(e.get(field, "")).lower() == key.lower()),
                  None)
         if i is not None:
             return i
@@ -640,6 +640,11 @@ def selftest():
             raise AssertionError("blank term must be rejected, not merged into the previous titleless one (#202)")
         except SystemExit:
             pass
+        with open(f, "a") as fh:
+            fh.write('{"id": "nums", "type": "term", "term": 123, "intuitive": "i", "technical": "t", "ts": 1}\n')
+        i_nonstr = add_term(f, "othr", "i2", "t2")
+        assert fold(f)[i_nonstr]["term"] == "othr", \
+            "a non-string term field in an existing line must not crash find_project_dup (#203)"
         # argv hands us lone surrogates for bytes it could not decode; written
         # through, they stop the dashboard rendering at all (orjson refuses the
         # payload, and NiceGUI requires orjson).
