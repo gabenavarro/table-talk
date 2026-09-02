@@ -39,7 +39,7 @@ one before installing anything but [uv](https://docs.astral.sh/uv/):
     TABLE_TALK_DIR=docs/demo ./bin/table-talk serve                # http://127.0.0.1:8731
     TABLE_TALK_DIR=docs/demo ./bin/table-talk serve --port 8732    # alongside your own
 
-Two projects, four sessions, live actions and jobs, a mermaid diagram and a
+Two projects, three sessions, live actions and jobs, a mermaid diagram and a
 glossary — enough to press `\`, `s`, `!` and `u` and see what they do.
 `TABLE_TALK_DIR` points the CLI and the dashboard at any data directory, which
 is also how you keep work logs separate:
