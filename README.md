@@ -216,8 +216,8 @@ tools when you start the job:
 - **Shell commands are matched against patterns you list.** `git commit` permits
   `git commit -m x` and refuses `git commit && git push`; chaining, redirection
   and substitution are refused rather than parsed. Quoting is respected, so a
-  commit message may contain `&`, while `$(` is refused even inside double
-  quotes — where a shell would still expand it.
+  commit message may contain `&`, while `$(`, `${` and a bare `$VAR` are all
+  refused even inside double quotes — where a shell would still expand them.
 - **Some patterns are refused outright.** `find . -exec rm -rf / {} +` contains
   no metacharacter at all, so `find`, `xargs`, `sudo`, `sh` and friends cannot
   be made safe by checking arguments. Bare `git` is refused too, because

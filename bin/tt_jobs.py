@@ -57,10 +57,12 @@ def launch_allowed(host):
 
 
 # Metacharacters that turn one permitted command into an arbitrary one.
-# Split by where they still bite: a shell expands $(...) and backticks INSIDE
-# double quotes, so those are unsafe wherever they appear; the rest are inert
-# once quoted, which is what lets `git commit -m "fix: a & b"` through.
-_ALWAYS = ("`", "$(", "${")
+# Split by where they still bite: a shell expands $(...), ${...} and a bare
+# $VAR, plus backticks, INSIDE double quotes, so those are unsafe wherever
+# they appear ("$" alone covers all three $ forms, being a prefix of each);
+# the rest are inert once quoted, which is what lets
+# `git commit -m "fix: a & b"` through.
+_ALWAYS = ("`", "$")
 _OUTSIDE = (";", "&&", "||", "|", ">", "<", "&", "\n", "\r")
 
 # Heads that run whatever they are handed. `find . -exec rm -rf / {} +` needs
@@ -72,7 +74,8 @@ _MULTIPLEXERS = frozenset((
     "nice", "stdbuf", "setsid", "flock", "script", "chroot", "unshare",
     "python", "python3", "perl", "ruby", "node", "ssh", "docker", "podman",
     "awk", "gawk", "sed", "tar", "rsync", "chmod", "chown", "rm", "dd",
-    "install", "ln", "mv", "cp", "curl", "wget", "systemd-run", "at", "crontab"))
+    "install", "ln", "mv", "cp", "curl", "wget", "systemd-run", "at", "crontab",
+    "npx", "time"))
 
 # `uv run python -c ...` is arbitrary execution, and so is every sibling.
 _RUNNER_SUBCOMMANDS = frozenset(("run", "exec", "x", "dlx", "tool"))
@@ -261,7 +264,7 @@ def usable_root(root):
     if any(part.startswith(".") for part in r.parts):
         # ~/.ssh and ~/.gnupg cleared every other test here.
         return f"{r} is a dot-directory, not a project"
-    if not (r / ".git").is_dir():
+    if not (r / ".git").exists():
         return (f"{r} has no .git, so it is not a project this can run in - "
                 f"a job may commit, and it should be a repository doing it")
     return None
@@ -401,6 +404,10 @@ def selftest():
                  "pytest `whoami`", "pytest $(id)", "pytest\nrm -rf /"):
         assert not gate_decision(spec, "Bash", {"command": evil})[0], \
             f"refused shell construction leaked through: {evil!r}"
+    assert not gate_decision(spec, "Bash", {"command": "pytest $HOME/x"})[0], \
+        "a BARE $VAR must be refused too, not only $( - a shell expands " \
+        "$HOME with no parentheses at all, and a job allowed only `pytest` " \
+        "could otherwise hand it $HOME/.ssh/id_ed25519"
     assert not gate_decision(spec, "Bash", {"command": "rm -rf /"})[0], \
         "an unmatched command is denied"
     assert not gate_decision(spec, "Bash", {})[0], "a Bash call with no command is denied"
@@ -444,10 +451,13 @@ def selftest():
 
     # Patterns that cannot be made safe by inspecting arguments.
     assert pattern_problem("find") and pattern_problem("xargs") and \
-           pattern_problem("sudo") and pattern_problem("sh"), \
+           pattern_problem("sudo") and pattern_problem("sh") and \
+           pattern_problem("npx") and pattern_problem("time"), \
         "a head that runs whatever it is handed must be refused as a PATTERN: " \
         "`find . -exec rm -rf / {} +` needs no metacharacter at all, so no " \
-        "command-time check can catch it"
+        "command-time check can catch it - and that includes `npx`, which " \
+        "downloads and runs an arbitrary package, and `time`, a multiplexer " \
+        "just like nice or nohup"
     assert pattern_problem("git") and not pattern_problem("git commit"), \
         "bare `git` permits `git -c alias.z='!id' z`, which runs anything; " \
         "with a subcommand it does not"
@@ -547,6 +557,13 @@ def selftest():
     assert usable_root(_dot), \
         "and a dot-directory is refused even WITH a .git: ~/.ssh and ~/.gnupg " \
         "cleared every other test this function makes"
+    _wt = _t2.mkdtemp() + "/worktree"
+    _os2.makedirs(_wt, exist_ok=True)
+    open(_wt + "/.git", "w").write("gitdir: /elsewhere/.git/worktrees/wt\n")
+    assert usable_root(_wt) is None, \
+        "a git worktree or submodule is a real project even though its .git " \
+        "is a FILE (a gitdir pointer), not a directory - that is how " \
+        "`git worktree add` writes it, and it must not be refused for that"
 
     _bd = _t2.mkdtemp()
     _os2.makedirs(_bd + "/repo/.git", exist_ok=True)
