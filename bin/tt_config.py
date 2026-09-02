@@ -167,8 +167,8 @@ def form_fields():
     the file already does that well.
     """
     bundle = themes()
-    dark = [n for n, v in bundle.items() if v.get("mode") != "light"]
-    light = [n for n, v in bundle.items() if v.get("mode") != "dark"]
+    dark = [n for n, v in bundle.items() if v["dark"]]
+    light = [n for n, v in bundle.items() if not v["dark"]]
     out = []
     for key in ("ui.view", "theme.default", "server.host"):
         out.append((key, "choice", list(_CHOICES[key])))
@@ -442,6 +442,13 @@ def selftest():
         names = dict((k, v) for k, _, v in form_fields())["theme.dark_theme"]
         assert "" in names and len(names) > 1 and "Dracula" in names, \
             "theme names come from the bundle, with \"\" for the built-in one"
+        fields = dict((k, v) for k, _, v in form_fields())
+        assert "Ayu Light" not in fields["theme.dark_theme"], \
+            "dark_theme must filter to actually-dark themes, not offer every " \
+            "bundled name under both dropdowns"
+        assert set(fields["theme.dark_theme"]) != set(fields["theme.light_theme"]), \
+            "the two dropdowns must not be identical: themes.json's polarity " \
+            "field is 'dark', not 'mode'"
 
         pick.write_text('[server]\nhost = "0.0.0.0"\n')
         assert load(pick)["server"]["host"] == "0.0.0.0", \
