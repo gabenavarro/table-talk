@@ -20,7 +20,7 @@ user can settle — not what you did, not how you got there.
 
 ### Before / after — this project's own failure
 
-**Before** — 80 words, recorded by this project. The question never appears:
+**Before** — 70 words, recorded by this project. The question never appears:
 
 > Implementation plan for the Multiplex dashboard is written, verified and up as
 > PR #59 (closes #58). 14 TDD tasks: Tasks 1-6 build a stdlib-only
