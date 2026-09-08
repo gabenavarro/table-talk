@@ -41,7 +41,7 @@
 - [ ] **Step 1: Issue + branch**
 
 ```bash
-cd /var/home/dna/GitHub/table-talk && git checkout main && git pull
+cd <repo> && git checkout main && git pull
 gh issue create --title "Dashboard symbol glyphs fall into scattershot font fallback (☀ renders as color emoji, ☾ as Tibetan-font glyph)" \
   --body "$(cat <<'EOF'
 JetBrains Mono lacks the braille spinner, ▰▱, ◐, ☀ and ☾. Unlisted, those fall into system fallback where each lands in a different font: braille/▰▱/◐ in Cascadia Code (wrong metrics), ☾ in Jomolhari (a Tibetan script font), and ☀ — Unicode Emoji property — gets grabbed by Noto Color Emoji, so the theme toggle shows a color-emoji sun beside monochrome ◐/☾.

@@ -46,7 +46,7 @@
 - [ ] **Step 1: Issue + branch**
 
 ```bash
-cd /var/home/dna/GitHub/table-talk && git checkout main && git pull
+cd <repo> && git checkout main && git pull
 gh issue create --title "Inline ASCII sketches under actions and jobs" \
   --body "$(cat <<'EOF'
 Actions and jobs should carry an optional small ASCII diagram, drawn right below the item's description on the dashboard — centered, themed via the existing ink tokens (structure strokes recede to the faint ink, labels read in the full ink), and never wider than the card (oversized art scrolls inside its own box). Recorded via --diagram on `table-talk action|task|progress`. Follow-up to the mermaid diagrams of #77: inline ASCII is the simpler form the reply protocol actually needs — it renders in the terminal reply AND on the wall.
