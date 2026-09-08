@@ -88,8 +88,7 @@ document.addEventListener('click', e => {
   const id = b.dataset.id || '', s = b.dataset.session || '';
   if (!/^[0-9a-f]{4,}$/.test(id)) return;              // never copy arbitrary text
   const cmd = /^[0-9a-f]{2,}$/.test(s) ? `SESSION: ${s} - ID: ${id}` : id;
-  if (navigator.clipboard) navigator.clipboard.writeText(cmd).catch(() => {});
-  b.classList.add('copied');
+  navigator.clipboard?.writeText(cmd).then(() => b.classList.add('copied')).catch(() => {});
   setTimeout(() => b.classList.remove('copied'), 900);
 });
 </script>"""
@@ -125,8 +124,7 @@ REPLY_JS = """<script>
     const text = (drafts.get(id) || '').trim();
     if (!text) return;
     const line = id + ': ' + text;
-    if (navigator.clipboard) navigator.clipboard.writeText(line).catch(() => {});
-    b.classList.add('copied');
+    navigator.clipboard?.writeText(line).then(() => b.classList.add('copied')).catch(() => {});
     setTimeout(() => b.classList.remove('copied'), 900);
   });
 
@@ -657,6 +655,10 @@ def restart_offer(running_port, config_port, explicit):
     return True, f"config asks for port {config_port}; restart to move there?"
 
 
+# The only two keys where a restart actually moves something (the listening
+# socket) - used just to decide whether the restart BUTTON is worth showing.
+# Every other saved key also needs a restart to take effect (see
+# needs_restart below); it just has no button that would help with it.
 RESTART_KEYS = ("server.host", "server.port")
 
 
@@ -679,13 +681,14 @@ def form_updates(current, submitted):
 
 
 def needs_restart(changed):
-    """Which saved settings only take effect on a fresh process.
+    """Every saved key, sorted - NONE of it takes effect without a restart.
 
-    The rest are read on every poll, so they apply as soon as they are saved.
-    Host and port are handed to ui.run() once, at startup, and nothing can move
-    a listening socket afterwards.
+    main() calls tt_config.load() exactly once, at startup; poll()/tick() and
+    every cfg[...] read in the file close over that one snapshot forever, so
+    a save through the settings form changes the file on disk and nothing
+    else until the process is restarted.
     """
-    return sorted(k for k in changed if k in RESTART_KEYS)
+    return sorted(changed)
 
 
 def coerce(kind, bounds, value, like):
@@ -1085,7 +1088,7 @@ def bar_for(open_n, done_n):
     return "█" * open_n, "░" * done_n
 
 
-def _prompt(cls, title, count, toggles=None, opened=None, key="", force=False, bar=None):
+def _prompt(cls, title, count, toggles, opened, key, force=False, bar=None):
     """A section header as a shell prompt line: '❯ actions --open (3)'.
 
     When `toggles` is given, clicking the line shows or hides that container —
@@ -1104,7 +1107,7 @@ def _prompt(cls, title, count, toggles=None, opened=None, key="", force=False, b
     with ui.element("button").classes(f"pr {cls}") as line:
         ui.label("❯").classes("g")
         ui.label(title)
-        tail = "" if toggles is None else (" ▾" if shown else " ▸")
+        tail = " ▾" if shown else " ▸"
         caret = ui.label(f"({count}){tail}").classes("n")
         # Shown only while the section is shut: open, the rows themselves say it.
         bar_el = ui.element("div").classes("bar-box")
@@ -1112,8 +1115,6 @@ def _prompt(cls, title, count, toggles=None, opened=None, key="", force=False, b
             with bar_el:
                 ui.label(bar[0]).classes("bar")
                 ui.label(bar[1]).classes("bar e")
-    if toggles is None:
-        return
     toggles.set_visibility(shown)
     bar_el.set_visibility(bool(bar) and not shown)
 
@@ -1412,6 +1413,11 @@ def selftest():
         "one open item among a hundred resolved still shows: rounding it away " \
         "makes the bar say nothing needs you while something does"
     assert "data-id" in COPY_JS and "clipboard" in COPY_JS
+    assert "then(() =>" in COPY_JS, \
+        "'copied' must confirm a WRITE THAT SUCCEEDED, never fire unconditionally " \
+        "right after a fire-and-forget writeText - otherwise a non-secure " \
+        "context (navigator.clipboard undefined) or a denied permission still " \
+        "flashes 'copied' with nothing on the clipboard"
     assert "[0-9a-f]{4,}" in COPY_JS, \
         "only a minted id (secrets.token_hex) is ever put on the clipboard, so " \
         "a stray element carrying a data-id cannot copy arbitrary text"
@@ -1913,11 +1919,12 @@ def selftest():
     assert form_updates(_cur, {"server.host": "0.0.0.0"}) == {"server.host": "0.0.0.0"}
     assert form_updates(_cur, {"server.port": None}) == {}, \
         "a field that failed to coerce is left ALONE, never written as null"
-    assert needs_restart({"server.host": "0.0.0.0", "ui.view": "flat"}) == ["server.host"], \
-        "host and port reach ui.run() once at startup and nothing can move a " \
-        "listening socket after; the rest are re-read on every poll"
-    assert needs_restart({"ui.view": "flat"}) == [], \
-        "and a setting that applies immediately must not demand a restart"
+    assert needs_restart({"server.host": "0.0.0.0", "ui.view": "flat"}) == \
+        ["server.host", "ui.view"], \
+        "main() loads config exactly once at startup, so EVERY saved key - " \
+        "not just host/port - needs a fresh process before it takes effect"
+    assert needs_restart({"ui.view": "flat"}) == ["ui.view"], \
+        "including a key with no restart button of its own"
     assert coerce("number", (1, 65535), "8731.0", 8731) == 8731 and \
            isinstance(coerce("number", (1, 65535), "8731.0", 8731), int), \
         "a number widget hands back a float for everything, and the loader " \
@@ -1990,6 +1997,11 @@ def selftest():
     assert REPLY_JS.index("[0-9a-f]{4,}") < REPLY_JS.index("writeText"), \
         "the id must be checked BEFORE anything reaches the clipboard, or a " \
         "stray data-reply-copy attribute copies arbitrary text"
+    assert "then(() =>" in REPLY_JS, \
+        "'copied' must confirm a WRITE THAT SUCCEEDED, never fire unconditionally " \
+        "right after a fire-and-forget writeText - otherwise a non-secure " \
+        "context or a denied permission still flashes 'copied' with the " \
+        "user's answer nowhere on the clipboard"
     assert "id + ': ' + text" in REPLY_JS, \
         "the clipboard line is `<id>: <answer>`, which is the format the " \
         "protocol asks the user to reply in - copying the bare answer would " \
@@ -2084,7 +2096,11 @@ def selftest():
     # A panel that throws must not take the job or the page down with it.
     def _boom(kind, body):
         raise RuntimeError("panel is broken")
-    _aio.run(run_job(_spec, _boom, _FakeClient))
+    logging.disable(logging.CRITICAL)
+    try:
+        _aio.run(run_job(_spec, _boom, _FakeClient))
+    finally:
+        logging.disable(logging.NOTSET)
 
     # run_job's own failure and refusal paths, unpinned until a mutation showed
     # it: deleting the gate's panel line, or swallowing the session's exception,
@@ -2568,11 +2584,10 @@ def main(port=None):
                 msg.set_text(why)
                 return
             later = needs_restart(changed)
-            msg.set_text(f"saved {', '.join(sorted(changed))}"
-                         + (f" - {', '.join(later)} needs a restart"
-                            if later else ""))
-            if later:
-                port_msg.set_text(f"{', '.join(later)} changed; restart to apply")
+            msg.set_text(f"saved {', '.join(later)} - applies on the next start")
+            moved = [k for k in later if k in RESTART_KEYS]
+            if moved:
+                port_msg.set_text(f"{', '.join(moved)} changed; restart to apply")
                 port_go.set_visibility(True)
 
         save.on("click", do_save)
