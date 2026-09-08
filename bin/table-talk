@@ -90,9 +90,10 @@ def all_ids():
 
 def new_id():
     used = all_ids()
-    while (i := secrets.token_hex(2)) in used:
-        pass
-    return i
+    for _ in range(1 << 16):
+        if (i := secrets.token_hex(2)) not in used:
+            return i
+    sys.exit("error: id space exhausted (all 65536 4-hex ids are in use)")
 
 
 @contextmanager
@@ -134,7 +135,7 @@ def find_project_dup(path, type_, field, key):
     for p in sorted(DATA_DIR.glob(pattern), reverse=True):
         state = fold(p)
         i = next((eid for eid, e in state.items()
-                  if e.get("type") == type_ and e.get(field, "").lower() == key.lower()),
+                  if e.get("type") == type_ and str(e.get(field, "")).lower() == key.lower()),
                  None)
         if i is not None:
             return i
@@ -186,6 +187,8 @@ def add_term(path, term, intuitive, technical):
     into an old file instead would make that file's summarize.latest jump to
     now, and this session's fold would show nothing it just recorded (#140).
     merge_projects keeps the newest-ts copy when an id spans files."""
+    if not term.strip():
+        sys.exit("error: term must not be empty")
     with mint_lock():
         existing = find_project_dup(path, "term", "term", term)
         i = existing if existing is not None else new_id()
@@ -205,6 +208,8 @@ def add_diagram(path, title, mermaid):
     (#140). merge_projects keeps the newest-ts copy when an id spans files,
     so the older file's superseded source is what the wall stops showing,
     while that file's own history still honestly says it was recorded there."""
+    if not title.strip():
+        sys.exit("error: title must not be empty")
     with mint_lock():
         existing = find_project_dup(path, "diagram", "title", title)
         i = existing if existing is not None else new_id()
@@ -631,6 +636,16 @@ def selftest():
         i2 = add_term(f, "fva", "v2", "t2")
         assert i1 == i2, "term dedupe is case-insensitive"
         assert fold(f)[i1]["intuitive"] == "v2", "term re-add updates definitions"
+        try:
+            add_term(f, "", "i", "t")
+            raise AssertionError("blank term must be rejected, not merged into the previous titleless one (#202)")
+        except SystemExit:
+            pass
+        with open(f, "a") as fh:
+            fh.write('{"id": "nums", "type": "term", "term": 123, "intuitive": "i", "technical": "t", "ts": 1}\n')
+        i_nonstr = add_term(f, "othr", "i2", "t2")
+        assert fold(f)[i_nonstr]["term"] == "othr", \
+            "a non-string term field in an existing line must not crash find_project_dup (#203)"
         # argv hands us lone surrogates for bytes it could not decode; written
         # through, they stop the dashboard rendering at all (orjson refuses the
         # payload, and NiceGUI requires orjson).
@@ -747,6 +762,15 @@ def selftest():
             assert new_id() == free, "new_id must skip an id used in any file"
         finally:
             secrets.token_hex = orig
+        # an id space with no free value left must fail loudly, not spin forever
+        secrets.token_hex = lambda n=2: "d00d"
+        try:
+            new_id()
+            raise AssertionError("new_id must raise once every id is exhausted, not hang")
+        except SystemExit:
+            pass
+        finally:
+            secrets.token_hex = orig
         assert safe_project("a/b") == "a_b" and safe_project("x") == "x", "project separators sanitized"
         assert session_file("sub/dir").name.endswith("-sub_dir.jsonl"), "slash project does not crash"
         tid = add_term(f, "GUARD", "i", "t")
@@ -761,6 +785,11 @@ def selftest():
         assert d1 == d2, "diagram dedupe is case-insensitive on the title"
         assert fold(f)[d1]["mermaid"].endswith("a --> c"), \
             "re-recording a title REPLACES the source: a diagram is iterated on"
+        try:
+            add_diagram(f, "  ", "flowchart TD\n  a --> b")
+            raise AssertionError("blank title must be rejected, not merged into the previous titleless one (#202)")
+        except SystemExit:
+            pass
         try:
             update(d1, {"status": "done"})
             raise AssertionError("done on a diagram must be rejected")
