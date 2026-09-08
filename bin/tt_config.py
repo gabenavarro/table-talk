@@ -89,6 +89,9 @@ def _merge(default, override, path=""):
     out of range, or an unknown key, is dropped with a warning rather than
     propagated."""
     out = {}
+    if isinstance(override, dict):
+        for key in override.keys() - default.keys():
+            print(f"warning: config {path}{key}: unknown key, ignored", file=sys.stderr)
     for key, dv in default.items():
         ov = override.get(key) if isinstance(override, dict) else None
         where = f"{path}{key}"
@@ -167,8 +170,8 @@ def form_fields():
     the file already does that well.
     """
     bundle = themes()
-    dark = [n for n, v in bundle.items() if v.get("mode") != "light"]
-    light = [n for n, v in bundle.items() if v.get("mode") != "dark"]
+    dark = [n for n, v in bundle.items() if v["dark"]]
+    light = [n for n, v in bundle.items() if not v["dark"]]
     out = []
     for key in ("ui.view", "theme.default", "server.host"):
         out.append((key, "choice", list(_CHOICES[key])))
@@ -267,6 +270,8 @@ def themes():
 
 
 def selftest():
+    import contextlib
+    import io
     import tempfile
     # The defaults are a SECOND copy of the stylesheet's values; if they drift, a
     # user with no config file silently gets the old colour back.
@@ -366,6 +371,18 @@ def selftest():
         extra.write_text('[nonsense]\nkey = 1\n')
         assert "nonsense" not in load(extra), "unknown sections are ignored, not merged"
 
+        typo = Path(td) / "typo.toml"
+        typo.write_text('[server]\npol_seconds = 5\n')
+        buf = io.StringIO()
+        with contextlib.redirect_stderr(buf):
+            got = load(typo)
+        assert got["server"]["poll_seconds"] == DEFAULTS["server"]["poll_seconds"], \
+            "a typo'd key must not silently take effect - it is not a known key"
+        assert "pol_seconds" in buf.getvalue() and "unknown key" in buf.getvalue(), \
+            "and it must warn: every OTHER way to get a value wrong in this " \
+            "file warns, and a typo that is dropped with no signal at all is " \
+            "the one mistake the user never learns they made"
+
         # Naming a bundled theme replaces the base palette; the file's own
         # tokens still win, so one colour can be changed without restating
         # the other sixteen.
@@ -442,6 +459,13 @@ def selftest():
         names = dict((k, v) for k, _, v in form_fields())["theme.dark_theme"]
         assert "" in names and len(names) > 1 and "Dracula" in names, \
             "theme names come from the bundle, with \"\" for the built-in one"
+        fields = dict((k, v) for k, _, v in form_fields())
+        assert "Ayu Light" not in fields["theme.dark_theme"], \
+            "dark_theme must filter to actually-dark themes, not offer every " \
+            "bundled name under both dropdowns"
+        assert set(fields["theme.dark_theme"]) != set(fields["theme.light_theme"]), \
+            "the two dropdowns must not be identical: themes.json's polarity " \
+            "field is 'dark', not 'mode'"
 
         pick.write_text('[server]\nhost = "0.0.0.0"\n')
         assert load(pick)["server"]["host"] == "0.0.0.0", \
