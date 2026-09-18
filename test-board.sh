@@ -73,5 +73,30 @@ c1="$(curl -s "$BASE/api/ref/$tref")"
 tref2="$(BUILDBOARD_URL="$BASE" "$TT" term "cache" --intuitive "memoized store" --technical "fast lookup table" 2>/dev/null | grep -oE '[0-9a-f]{4}' | head -1)"
 [ "$tref2" = "$tref" ] && ok "term upserts by name (dedup)" || bad "term upserts by name (dedup)" "$tref vs $tref2"
 
+# task -> recordTask; progress -> pct; blocked-on -> blocks edge + unblock
+tref="$(BUILDBOARD_URL="$BASE" "$TT" task "ship it" 2>/dev/null | head -1)"
+tref="$(echo "$tref" | grep -oE '[0-9a-f]{4}' | head -1)"
+[ -n "$tref" ] && ok "task returns a ref" || bad "task returns a ref" "$tref"
+titem="$(curl -s "$BASE/api/ref/$tref")"
+titemid="$(echo "$titem" | jget .id)"
+BUILDBOARD_URL="$BASE" "$TT" progress "$tref" "half way" --pct 40 >/dev/null 2>&1
+tp="$(curl -s "$BASE/api/items/$titemid" | jget .pct)"
+[ "$tp" = "40" ] && ok "progress sets pct" || bad "progress sets pct" "$tp"
+BUILDBOARD_URL="$BASE" "$TT" progress "$tref" --pct 100 >/dev/null 2>&1
+tst="$(curl -s "$BASE/api/items/$titemid" | jget .status)"
+[ "$tst" = "done" ] && ok "pct=100 marks task done" || bad "pct=100 marks task done" "$tst"
+
+# blocked-on an open action -> blocked; resolving the action unblocks it
+bact="$(BUILDBOARD_URL="$BASE" "$TT" action "Gate?" --why w --rec y 2>/dev/null | head -1)"
+bact="$(echo "$bact" | grep -oE '[0-9a-f]{4}' | head -1)"
+btask="$(BUILDBOARD_URL="$BASE" "$TT" task "wait for gate" 2>/dev/null | grep -oE '[0-9a-f]{4}' | head -1)"
+btaskid="$(curl -s "$BASE/api/ref/$btask" | jget .id)"
+BUILDBOARD_URL="$BASE" "$TT" progress "$btask" "waiting" --blocked-on "$bact" >/dev/null 2>&1
+bst="$(curl -s "$BASE/api/items/$btaskid" | jget .status)"
+[ "$bst" = "blocked" ] && ok "--blocked-on sets blocked" || bad "--blocked-on sets blocked" "$bst"
+BUILDBOARD_URL="$BASE" "$TT" done "$bact" --choice "y" >/dev/null 2>&1
+bst2="$(curl -s "$BASE/api/items/$btaskid" | jget .status)"
+[ "$bst2" = "open" ] && ok "resolving the gate unblocks the task" || bad "resolving the gate unblocks the task" "$bst2"
+
 echo "board-mode: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

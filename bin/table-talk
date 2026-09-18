@@ -129,6 +129,83 @@ def board_term(args):
             print(f"note: board card {board_deep_link(args, ref)}", file=sys.stderr)
 
 
+def board_task(args):
+    body = {"what": args.what, "board_id": BOARD_ID}
+    if getattr(args, "intuitive", None):
+        body["body_md"] = args.intuitive
+    if args.dry_run:
+        print(f"[dry-run] POST {board_url_of(args)}/api/tasks {json.dumps(body)}")
+        print("[dry-run] ref will be assigned by the board")
+        return
+    board_health(args)
+    res = board_request(args, "POST", "/api/tasks", body) or {}
+    ref = res.get("ref")
+    if args.json:
+        print(json.dumps({"ref": ref, "type": "task", "title": args.what,
+                          "url": board_deep_link(args, ref)}))
+    else:
+        print(ref)
+        print(f"note: board card {board_deep_link(args, ref)}", file=sys.stderr)
+
+
+def _ref_item_id(args, ref):
+    """Resolve a ref (item, decision, or concept) to its board item id."""
+    resolved = board_request(args, "GET", f"/api/ref/{ref}")
+    if not resolved:
+        sys.exit(f"error: ref '{ref}' not found on the board")
+    src = resolved.get("source")
+    if src == "item":
+        return resolved["id"]
+    if src == "decision":
+        d = board_request(args, "GET", f"/api/decisions/{resolved['id']}")
+        return (d or {}).get("item_id")
+    if src == "concept":
+        c = board_request(args, "GET", f"/api/concepts/{resolved['id']}")
+        return (c or {}).get("item_id")
+    return None
+
+
+def board_progress(args, ref):
+    if args.dry_run:
+        print(f"[dry-run] progress {ref} (pct={args.pct}, blocked_on={args.blocked_on})")
+        return
+    board_health(args)
+    item_id = _ref_item_id(args, ref)
+    if not item_id:
+        sys.exit(f"error: ref '{ref}' has no board item to update")
+    item = board_request(args, "GET", f"/api/items/{item_id}") or {}
+    patch = {}
+    if args.text:
+        existing = item.get("body_md") or ""
+        patch["body_md"] = (existing + ("\n" if existing else "") + f"- {args.text}").strip()
+    if args.pct is not None:
+        patch["pct"] = args.pct
+    if args.blocked_on:
+        act_id = _ref_item_id(args, args.blocked_on)
+        if not act_id:
+            sys.exit(f"error: blocked-on ref '{args.blocked_on}' has no board item")
+        try:
+            board_request(args, "POST", "/api/edges",
+                          {"from_id": item_id, "to_id": act_id, "kind": "blocks", "board_id": BOARD_ID})
+        except urllib.error.HTTPError as e:
+            if e.code != 409:
+                raise  # an existing edge is fine; anything else is a real error
+        patch["status"] = "blocked"
+    if patch:
+        board_request(args, "PATCH", f"/api/items/{item_id}", patch)
+    out = board_request(args, "GET", f"/api/items/{item_id}") or {}
+    if args.json:
+        print(json.dumps({"ref": ref, "type": "task", "status": out.get("status"),
+                          "pct": out.get("pct")}))
+    else:
+        bits = []
+        if args.pct is not None:
+            bits.append(f"{args.pct}%")
+        if args.blocked_on:
+            bits.append(f"blocked on {args.blocked_on}")
+        print(f"progress {ref}{' ' + ' '.join(bits) if bits else ''}")
+
+
 def board_show_open(args):
     board_health(args)
     items = board_request(args, "GET", f"/api/items?board={BOARD_ID}&status=open") or []
@@ -1415,13 +1492,13 @@ def main():
     a.add_argument("--diagram", help="small ASCII sketch drawn under the item (≤40 cols)")
     a.add_argument("--intuitive", help="plain-English line: what this is and what is needed")
 
-    t = sub.add_parser("task", help="record background work")
+    t = sub.add_parser("task", help="record background work", parents=[common])
     t.add_argument("what")
     t.add_argument("--project")
     t.add_argument("--diagram", help="small ASCII sketch drawn under the item (≤40 cols)")
     t.add_argument("--intuitive", help="plain-English line: what this job is doing")
 
-    pr = sub.add_parser("progress", help="update progress on an item")
+    pr = sub.add_parser("progress", help="update progress on an item", parents=[common])
     pr.add_argument("id")
     pr.add_argument("text", nargs="?", help="progress note; omit to only amend --intuitive/--diagram")
     pr.add_argument("--diagram", help="add or replace the item's ASCII sketch")
@@ -1481,9 +1558,13 @@ def main():
         print(add_event(args.project, with_extras(
             {"type": "action", "status": "open", "background": args.background,
              "why": args.why, "rec": args.rec}, args)))
+    elif args.cmd == "task" and board_mode(args):
+        board_task(args)
     elif args.cmd == "task":
         print(add_event(args.project, with_extras(
             {"type": "task", "status": "open", "what": args.what}, args)))
+    elif args.cmd == "progress" and board_mode(args):
+        board_progress(args, args.id)
     elif args.cmd == "progress":
         update(args.id, progress_fields(args))
     elif args.cmd == "done":
