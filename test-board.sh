@@ -64,5 +64,14 @@ BUILDBOARD_URL="$BASE" "$TT" action "Dry?" --why w --rec r --dry-run | grep -q "
 # json
 BUILDBOARD_URL="$BASE" "$TT" action "Json?" --why w --rec r --json | grep -q '"ref"' && ok "json emits a stable object" || bad "json emits a stable object"
 
+# term -> glossary upsert (dedup by name)
+tref="$(BUILDBOARD_URL="$BASE" "$TT" term "Cache" --intuitive "memoized store" --technical "fast lookup table" 2>/dev/null | head -1)"
+tref="$(echo "$tref" | grep -oE '[0-9a-f]{4}' | head -1)"
+[ -n "$tref" ] && ok "term returns a ref" || bad "term returns a ref" "$tref"
+c1="$(curl -s "$BASE/api/ref/$tref")"
+[ "$(echo "$c1" | jget .source)" = "concept" ] && ok "term ref resolves to a concept" || bad "term ref resolves to a concept" "$c1"
+tref2="$(BUILDBOARD_URL="$BASE" "$TT" term "cache" --intuitive "memoized store" --technical "fast lookup table" 2>/dev/null | grep -oE '[0-9a-f]{4}' | head -1)"
+[ "$tref2" = "$tref" ] && ok "term upserts by name (dedup)" || bad "term upserts by name (dedup)" "$tref vs $tref2"
+
 echo "board-mode: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

@@ -110,6 +110,25 @@ def board_done(args, ref):
         sys.exit(f"error: ref '{ref}' is a {source}, not an action/task")
 
 
+def board_term(args):
+    body = {"name": args.term, "definition": args.intuitive,
+            "details_md": args.technical, "source": BOARD_ID}
+    if args.dry_run:
+        print(f"[dry-run] POST {board_url_of(args)}/api/concepts/upsert {json.dumps(body)}")
+        print("[dry-run] concept upserted by name (ref assigned by the board)")
+        return
+    board_health(args)
+    res = board_request(args, "POST", "/api/concepts/upsert", body) or {}
+    ref = res.get("ref")
+    if args.json:
+        print(json.dumps({"ref": ref, "type": "term", "name": args.term,
+                          "url": board_deep_link(args, ref) if ref else None}))
+    else:
+        print(f"{args.term}  ({ref})")
+        if ref:
+            print(f"note: board card {board_deep_link(args, ref)}", file=sys.stderr)
+
+
 def board_show_open(args):
     board_health(args)
     items = board_request(args, "GET", f"/api/items?board={BOARD_ID}&status=open") or []
@@ -1416,7 +1435,7 @@ def main():
     d.add_argument("id")
     d.add_argument("--choice", help="for a decision: which option was chosen (required in board mode)")
 
-    tm = sub.add_parser("term", help="record a technical term")
+    tm = sub.add_parser("term", help="record a technical term", parents=[common])
     tm.add_argument("term")
     tm.add_argument("--intuitive", required=True)
     tm.add_argument("--technical", required=True)
@@ -1469,6 +1488,8 @@ def main():
         update(args.id, progress_fields(args))
     elif args.cmd == "done":
         update(args.id, {"status": "done"})
+    elif args.cmd == "term" and board_mode(args):
+        board_term(args)
     elif args.cmd == "term":
         print(add_term(session_file(args.project), args.term, args.intuitive, args.technical))
     elif args.cmd == "diagram":
