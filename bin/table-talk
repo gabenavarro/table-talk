@@ -12,10 +12,128 @@ import secrets
 import shutil
 import sys
 import time
+import urllib.error
+import urllib.request
 from contextlib import contextmanager
 from pathlib import Path
 
 DATA_DIR = Path(os.environ.get("TABLE_TALK_DIR") or str(Path.home() / ".local/share/table-talk"))
+BOARD_URL = os.environ.get("BUILDBOARD_URL", "").rstrip("/")
+BOARD_ID = os.environ.get("BUILDBOARD_BOARD", "default")
+
+
+def board_url_of(args):
+    """The buildboard base URL for this invocation: --board flag, else env."""
+    return (getattr(args, "board", None) or BOARD_URL or "").rstrip("/")
+
+
+def board_mode(args):
+    return bool(board_url_of(args))
+
+
+def board_request(args, method, path, body=None):
+    url = board_url_of(args) + path
+    data = json.dumps(body).encode() if body is not None else None
+    req = urllib.request.Request(url, data=data, method=method)
+    req.add_header("Content-Type", "application/json")
+    with urllib.request.urlopen(req, timeout=5) as resp:
+        raw = resp.read().decode()
+    return json.loads(raw) if raw else None
+
+
+def board_health(args):
+    """Fail fast on an unreachable board, distinguishing 'not running' from a
+    wrong URL so a misconfigured BUILDBOARD_URL is diagnosable in one shot."""
+    url = board_url_of(args)
+    try:
+        with urllib.request.urlopen(url + "/api/health", timeout=3) as resp:
+            return resp.status == 200
+    except urllib.error.HTTPError as e:
+        if e.code == 404:
+            sys.exit(f"error: no /api/health at {url} — BUILDBOARD_URL should point at the server root, not /api")
+        sys.exit(f"error: board at {url} returned HTTP {e.code}")
+    except (urllib.error.URLError, OSError):
+        sys.exit(f"error: board not reachable at {url} — is buildboard running? (start it, or drop board mode)")
+
+
+def board_deep_link(args, ref):
+    return f"{board_url_of(args)}/?board={BOARD_ID}&item={ref}"
+
+
+def board_action(args):
+    body = {"question": args.background, "why": args.why, "rec": args.rec, "board_id": BOARD_ID}
+    if args.intuitive:
+        body["why"] = f"{args.intuitive} — {args.why}"
+    if args.dry_run:
+        print(f"[dry-run] POST {board_url_of(args)}/api/decide {json.dumps(body)}")
+        print("[dry-run] ref will be assigned by the board")
+        return
+    board_health(args)
+    res = board_request(args, "POST", "/api/decide", body)
+    ref = res.get("ref")
+    if args.json:
+        print(json.dumps({"ref": ref, "type": "action", "title": args.background,
+                          "url": board_deep_link(args, ref)}))
+    else:
+        print(ref)
+        print(f"note: board card {board_deep_link(args, ref)}", file=sys.stderr)
+
+
+def board_done(args, ref):
+    if args.dry_run:
+        print(f"[dry-run] resolve {ref} (choice={getattr(args, 'choice', None)})")
+        return
+    board_health(args)
+    resolved = board_request(args, "GET", f"/api/ref/{ref}")
+    if not resolved:
+        sys.exit(f"error: unknown ref '{ref}' on the board — try `table-talk show --open`")
+    source = resolved.get("source")
+    kind = None
+    if source == "item":
+        item = board_request(args, "GET", f"/api/items/{resolved['id']}")
+        kind = (item or {}).get("kind")
+    is_decision = source == "decision" or kind == "decision"
+    choice = getattr(args, "choice", None)
+    if is_decision:
+        if not choice:
+            sys.exit(f"error: decision {ref} needs a choice — pass --choice \"<option>\"")
+        res = board_request(args, "POST", f"/api/decisions/{ref}/resolve", {"choice": choice})
+        if args.json:
+            print(json.dumps({"ref": ref, "type": "decision", "choice": choice,
+                              "unblocked": [u.get("id") for u in (res or {}).get("unblocked", [])]}))
+        else:
+            print(f"resolved {ref} → {choice}")
+    elif source == "item":
+        board_request(args, "PATCH", f"/api/items/{resolved['id']}", {"status": "done"})
+        print("done" if not args.json else json.dumps({"ref": ref, "type": "item", "status": "done"}))
+    else:
+        sys.exit(f"error: ref '{ref}' is a {source}, not an action/task")
+
+
+def board_show_open(args):
+    board_health(args)
+    items = board_request(args, "GET", f"/api/items?board={BOARD_ID}&status=open") or []
+    rows = [(i.get("ref"), i.get("kind"), i.get("title"), i.get("status")) for i in items]
+    if args.json:
+        print(json.dumps([{"ref": r, "kind": k, "title": t, "status": s} for r, k, t, s in rows]))
+        return
+    if not rows:
+        print("(no open items on the board)")
+        return
+    for r, k, t, s in rows:
+        print(f"{r}  {k}  {t}  ({s})")
+
+
+def board_status(args):
+    url = board_url_of(args)
+    if not url:
+        print("mode: local (no BUILDBOARD_URL set)")
+        return
+    try:
+        board_health(args)
+        print(f"mode: board  url={url}  board={BOARD_ID}  reachable=yes")
+    except SystemExit:
+        print(f"mode: board  url={url}  board={BOARD_ID}  reachable=no")
 
 
 def fold(path):
@@ -1264,7 +1382,13 @@ def main():
     p.add_argument("--selftest", action="store_true", help=argparse.SUPPRESS)
     sub = p.add_subparsers(dest="cmd")
 
-    a = sub.add_parser("action", help="record a decision needed from the user")
+    common = argparse.ArgumentParser(add_help=False)
+    common.add_argument("--board", help="buildboard base URL; enables board mode (overrides BUILDBOARD_URL)")
+    common.add_argument("--json", action="store_true", help="emit a stable JSON object")
+    common.add_argument("--dry-run", action="store_true",
+                        help="print the REST calls without making them (works offline)")
+
+    a = sub.add_parser("action", help="record a decision needed from the user", parents=[common])
     a.add_argument("background")
     a.add_argument("--why", required=True)
     a.add_argument("--rec", required=True)
@@ -1288,8 +1412,9 @@ def main():
     pr.add_argument("--pct", type=int,
                     help="explicit completion 0-100; beats any number found in the text")
 
-    d = sub.add_parser("done", help="mark an item done")
+    d = sub.add_parser("done", help="mark an item done", parents=[common])
     d.add_argument("id")
+    d.add_argument("--choice", help="for a decision: which option was chosen (required in board mode)")
 
     tm = sub.add_parser("term", help="record a technical term")
     tm.add_argument("term")
@@ -1302,12 +1427,14 @@ def main():
     dg.add_argument("--title", required=True)
     dg.add_argument("--project")
 
-    sh = sub.add_parser("show", help="dump folded state")
+    sh = sub.add_parser("show", help="dump folded state", parents=[common])
     sh.add_argument("project", nargs="?")
     sh.add_argument("--open", action="store_true",
                     help="only actions and jobs still outstanding")
     sh.add_argument("--mine", action="store_true",
                     help="only rows this session recorded (needs CLAUDE_CODE_SESSION_ID)")
+
+    sub.add_parser("status", help="report board mode and reachability", parents=[common])
 
     sub.add_parser("url", help="print the dashboard's URL, per the config")
 
@@ -1323,6 +1450,14 @@ def main():
     args = p.parse_args()
     if args.selftest:
         selftest()
+    elif args.cmd == "status":
+        board_status(args)
+    elif args.cmd == "action" and board_mode(args):
+        board_action(args)
+    elif args.cmd == "done" and board_mode(args):
+        board_done(args, args.id)
+    elif args.cmd == "show" and args.open and board_mode(args):
+        board_show_open(args)
     elif args.cmd == "action":
         print(add_event(args.project, with_extras(
             {"type": "action", "status": "open", "background": args.background,
@@ -1349,7 +1484,7 @@ def main():
     else:
         p.print_help()
 
-    if args.cmd in ("action", "task", "progress", "done", "term", "diagram"):
+    if not board_mode(args) and args.cmd in ("action", "task", "progress", "done", "term", "diagram"):
         # BOTH projects: the one the item lives in (progress/done resolve an id
         # across every project) and the one this session is reporting for. Using
         # only the item's silently skips the cwd's other stale rows; using only
