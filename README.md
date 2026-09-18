@@ -79,6 +79,27 @@ install.sh symlinks the CLI into ~/.local/bin — make sure that's on your PATH.
     table-talk show --open     # only what is still outstanding (--mine for this session only)
     table-talk serve           # dashboard (run it yourself — it refuses inside a Claude session)
 
+## Board mode (buildboard)
+
+By default table-talk writes to a local JSONL log. Point it at a running
+[buildboard](https://github.com/gabenavarro/buildboard) and it records the same
+things *into the board* — so a decision/task/term is reachable from chat (by its
+short `ref`), the board (card + thread), and any agent (MCP). buildboard is the
+canonical store.
+
+    export BUILDBOARD_URL=http://localhost:5173      # or pass --board http://…
+    table-talk status                                 # reports board mode + reachability
+    table-talk action "Ship it?" --why "user need" --rec "yes"   # -> ref
+    table-talk done <ref> --choice yes                 # resolve + unblock dependents
+    table-talk term "Cache" --intuitive "…" --technical "…"     # upsert glossary (dedup by name)
+    table-talk task "write docs"
+    table-talk progress <ref> "half way" --pct 50
+    table-talk progress <ref> --blocked-on <decision-ref>       # blocks edge + blocked
+
+In board mode the commands target the board (not the local log); `--json` and
+`--dry-run` work as usual. Drop `BUILDBOARD_URL` (or use a local session) to go
+back to log-only. See buildboard's `docs/integration.md` for the full protocol.
+
 ## Dashboard
 
 `table-talk serve` opens a tmux-shaped view of every session log, polling every
